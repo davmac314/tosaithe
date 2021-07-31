@@ -1,10 +1,22 @@
+#include <stddef.h>
+
 #include "uefi.h"
 #include "uefi-loadedimage.h"
 #include "uefi-devicepath.h"
 #include "uefi-media-file.h"
 
+#include "stivale2.h"
+
+#include "elf.h"
+
 EFI_BOOT_SERVICES *EBS;
 EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut;
+
+// Placement new:
+inline void * operator new(size_t count, void *addr)
+{
+    return addr;
+}
 
 // Locate a protocol by finding a singular handle supporting it
 static void *locateProtocol(const EFI_GUID &guid)
@@ -37,9 +49,11 @@ static void *locateProtocol(const EFI_GUID &guid)
 
 static void *alloc(unsigned size)
 {
-    void *allocdBuf = nullptr;
+    void *allocdBuf;
     EFI_STATUS status = EBS->AllocatePool(EfiLoaderCode, size, &allocdBuf);
-    // We'll assume, on failure, allocdBuf will still be null...
+    if (EFI_ERROR(status)) {
+        return nullptr;
+    }
     return allocdBuf;
 }
 
@@ -57,8 +71,8 @@ static void con_write(uint64_t val)
 {
     CHAR16 buf[21];
 
-    unsigned pos = 21;
-    buf[21] = 0;
+    unsigned pos = 20;
+    buf[20] = 0;
 
     do {
         unsigned digit = val % 10;
@@ -100,6 +114,13 @@ static CHAR16 hexdigit(int val)
         return L'0' + val;
     }
     return L'A' + val;
+}
+
+template <typename T> void swap(T &a, T &b)
+{
+    T temp = a;
+    a = b;
+    b = temp;
 }
 
 // Find the file path (if any) device node in the device path (it should be the last node
@@ -345,7 +366,7 @@ static EFI_STATUS chainLoad(EFI_HANDLE ImageHandle, const CHAR16 *ExecPath, cons
     return status;
 }
 
-EFI_STATUS loadBadux(EFI_HANDLE ImageHandle);
+EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine);
 
 extern "C"
 EFI_STATUS
@@ -406,41 +427,161 @@ EfiMain (
     } else if (keyPr.UnicodeChar == L'2') {
         return chainLoad(ImageHandle, L"\\EFI\\Shell.efi", L"Shell.efi");
     } if (keyPr.UnicodeChar == L'3') {
-        return loadBadux(ImageHandle);
+        return load_stivale2(ImageHandle, L"\\badux.elf", L"");
     }
 
     return EFI_LOAD_ERROR;
 }
 
-struct stivale2_tag {
-    uint64_t identifier;
-    stivale2_tag *next;
+// Class to manage building a Stivale2 memory map structure
+class tosaithe_stivale2_memmap {
+    stivale2_struct_tag_memmap *st2_memmap = nullptr;
+    uint32_t capacity = 0;
+
+    bool increase_capacity()
+    {
+        auto &entries = st2_memmap->entries;
+
+        uint32_t newcapacity = capacity + 6; // bump capacity by arbitrary amount
+        uint32_t req_size = sizeof(stivale2_struct_tag_memmap)
+                + sizeof(stivale2_mmap_entry) * newcapacity;
+        stivale2_struct_tag_memmap *newmap = (stivale2_struct_tag_memmap *) alloc(req_size);
+        if (newmap == nullptr) {
+            return false;
+        }
+
+        // Copy map from old to new storage
+        new(newmap) stivale2_struct_tag_memmap(*st2_memmap);
+        for (uint32_t i = 0; i < entries; i++) {
+            new(&newmap->memmap[entries]) stivale2_mmap_entry(st2_memmap->memmap[entries]);
+        }
+
+        freePool(st2_memmap);
+        st2_memmap = newmap;
+        capacity = newcapacity;
+
+        return true;
+    }
+
+public:
+    bool allocate(uint32_t capacity_p)
+    {
+        uint32_t req_size = sizeof(stivale2_struct_tag_memmap)
+                + sizeof(stivale2_mmap_entry) * capacity_p;
+        st2_memmap = (stivale2_struct_tag_memmap *) alloc(req_size);
+        if (st2_memmap == nullptr) {
+            return false;
+        }
+        new(st2_memmap) stivale2_struct_tag_memmap();
+        capacity = capacity_p;
+        return true;
+    }
+
+    bool add_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length)
+    {
+        auto &entries = st2_memmap->entries;
+
+        if (st2_memmap->entries == capacity) {
+            if (!increase_capacity()) {
+                return false;
+            }
+        }
+
+        new(&st2_memmap->memmap[entries]) stivale2_mmap_entry();
+        st2_memmap->memmap[entries].type = type_p;
+        st2_memmap->memmap[entries].base = physaddr;
+        st2_memmap->memmap[entries].length = length;
+        st2_memmap->memmap[entries].unused = 0;
+        entries++;
+
+        return true;
+    }
+
+    // Insert an entry, which should be making use of available space only.
+    // On failure, returns false; in that case integrity of the map is no longer guaranteed.
+    // On success returns true: beware, map may require sorting
+    bool insert_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length)
+    {
+        auto &entries = st2_memmap->entries;
+
+        uint64_t physend = physaddr + length;
+
+        for (uint32_t i = 0; i < entries; i++) {
+            uint64_t ent_base = st2_memmap->memmap[i].base;
+            uint64_t ent_len = st2_memmap->memmap[i].length;
+            uint64_t ent_end = ent_base + ent_len;
+
+            if (ent_base >= physaddr && ent_end <= physend) {
+                // complete overlap; remove this entry by moving the last entry into its place
+                st2_memmap->memmap[i] = st2_memmap->memmap[--entries];
+            }
+            else if (ent_end > physaddr && physend > ent_base) {
+                // partial overlap, trim or possibly split
+                if (physaddr <= ent_base) {
+                    // trim start
+                    ent_len -= (physend - ent_base);
+                    ent_base = physend;
+                    st2_memmap->memmap[i].base = ent_base;
+                    st2_memmap->memmap[i].length = ent_len;
+                }
+                else if (physend >= ent_end) {
+                    // trim end
+                    ent_len = physaddr - ent_base;
+                    st2_memmap->memmap[i].length = ent_len;
+                }
+                else {
+                    // split
+                    uint64_t newlen = ent_end - physend;
+                    if (!add_entry(st2_memmap->memmap[i].type, physend, newlen)) {
+                        return false;
+                    }
+                    ent_len = physaddr - ent_base;
+                    st2_memmap->memmap[i].length = ent_len;
+                }
+            }
+        }
+
+        // Finally add the new entry:
+        if (!add_entry(type_p, physaddr, length)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    void sort()
+    {
+        // Ok, so this is bubble sort. But the map shouldn't be too big and will likely be nearly
+        // sorted already, so this is a good fit.
+
+        uint32_t end_i = st2_memmap->entries - 1; // highest unsorted entry
+
+        while (end_i > 0) {
+            uint32_t last_i = 0;
+            for (uint32_t i = 0; i < end_i; i++) {
+                if (st2_memmap->memmap[i].base > st2_memmap->memmap[i+1].base) {
+                    swap(st2_memmap->memmap[i], st2_memmap->memmap[i+1]);
+                    last_i = i;
+                }
+            }
+            end_i = last_i;
+        }
+    }
+
+    stivale2_struct_tag_memmap *get()
+    {
+        return st2_memmap;
+    }
+
+    ~tosaithe_stivale2_memmap()
+    {
+        if (st2_memmap != nullptr) {
+            freePool(st2_memmap);
+        }
+    }
 };
 
-struct stivale2_struct {
-    char bootloader_brand[64];    // null-terminated ASCII bootloader brand string
-    char bootloader_version[64];  // null-terminated ASCII bootloader version string
-    stivale2_tag *tags;          // Linked list of tags
-};
-
-struct stivale2_struct_tag_framebuffer {
-    stivale2_tag tag;             // Identifier: 0x506461d2950408fa
-    uint64_t framebuffer_addr;    // Address of the framebuffer
-    uint16_t framebuffer_width;   // Width and height in pixels
-    uint16_t framebuffer_height;
-    uint16_t framebuffer_pitch;   // Pitch in bytes
-    uint16_t framebuffer_bpp;     // Bits per pixel
-    uint8_t  memory_model;        // Memory model: 1=RGB, all other values undefined
-    uint8_t  red_mask_size;       // RGB mask sizes and left shifts
-    uint8_t  red_mask_shift;
-    uint8_t  green_mask_size;
-    uint8_t  green_mask_shift;
-    uint8_t  blue_mask_size;
-    uint8_t  blue_mask_shift;
-} __attribute__((packed, aligned));
-
-
-EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
+EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine)
 {
     EFI_LOADED_IMAGE_PROTOCOL *imageProto;
     EFI_STATUS status = EBS->HandleProtocol(ImageHandle,
@@ -449,19 +590,6 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
 
     EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *dpToTextProto =
             (EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *)locateProtocol(EFI_device_path_to_text_protocol_guid);
-
-    EFI_DEVICE_PATH_UTILITIES_PROTOCOL *dpUtils =
-            (EFI_DEVICE_PATH_UTILITIES_PROTOCOL *)locateProtocol(EFI_device_path_utilities_protocol_guid);
-
-
-    if (dpToTextProto) {
-        wchar_t *dpString = dpToTextProto->ConvertDevicePathToText(imageProto->FilePath,
-                false /* displayOnly */, false /* allowShortcuts */);
-
-        con_write(L"FilePath: ");
-        con_write(dpString);
-        con_write(L"\r\n");
-    }
 
     EFI_DEVICE_PATH_PROTOCOL *imageDevicePathProto = nullptr;
     if (EBS->HandleProtocol(ImageHandle, &EFI_loaded_image_device_path_protocol_guid,
@@ -475,63 +603,29 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
         return EFI_LOAD_ERROR;
     }
 
-    if (dpToTextProto) {
-        ConOut->OutputString(ConOut, L"DevicePath: ");
-        wchar_t *idpString = dpToTextProto->ConvertDevicePathToText(imageDevicePathProto,
-                false /* displayOnly */, false /* allowShortcuts */);
-        ConOut->OutputString(ConOut, idpString);
-        ConOut->OutputString(ConOut, L"\r\n");
-    }
-
     unsigned fp_index = find_file_path(imageDevicePathProto);
-    if (dpToTextProto) {
-        uintptr_t fp_addr = (uintptr_t)imageDevicePathProto + fp_index;
-        EFI_DEVICE_PATH_PROTOCOL *filePath = (EFI_DEVICE_PATH_PROTOCOL *)fp_addr;
-        ConOut->OutputString(ConOut, L"DevicePath file path: ");
-        wchar_t *idpString = dpToTextProto->ConvertDevicePathToText(filePath,
-                false /* displayOnly */, false /* allowShortcuts */);
-        ConOut->OutputString(ConOut, idpString);
-        ConOut->OutputString(ConOut, L"\r\n");
-    }
 
-    CHAR16 BADUX_FILEPATH[] = L"\\badux.elf";
-    EFI_DEVICE_PATH_PROTOCOL *baduxPath = switch_path(imageDevicePathProto, BADUX_FILEPATH, sizeof(BADUX_FILEPATH));
-    if (dpToTextProto) {
-        ConOut->OutputString(ConOut, L"kernel path: ");
-        wchar_t *idpString = dpToTextProto->ConvertDevicePathToText(baduxPath,
-                false /* displayOnly */, false /* allowShortcuts */);
-        ConOut->OutputString(ConOut, idpString);
-        ConOut->OutputString(ConOut, L"\r\n");
-    }
+    unsigned exec_path_size = (strlen(exec_path) + 1) * sizeof(CHAR16);
+    EFI_DEVICE_PATH_PROTOCOL *kernel_path = switch_path(imageDevicePathProto, exec_path, exec_path_size);
 
     // Allocate space for kernel file
     // For now we'll load the fixed 0x200000 - 0x1000, the -0x1000 is for the file header.
     EFI_PHYSICAL_ADDRESS kernelAddr = 0x200000u - 0x1000u;
     status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, (0x200000u + 0x1000u)/0x1000u, &kernelAddr);
-    if (status != EFI_SUCCESS) {
+    if (EFI_ERROR(EFI_SUCCESS)) {
         ConOut->OutputString(ConOut, L"Couldn't allocate kernel memory at 0x200000u\r\n");
         return EFI_LOAD_ERROR;
     }
 
-    ConOut->OutputString(ConOut, L"Allocated kernel memory at 0x200000u\r\n");
-
+    ConOut->OutputString(ConOut, L"Allocated kernel memory at 0x200000u\r\n"); // XXX
 
     // Try to load the kernel now
     EFI_HANDLE loadDevice;
 
-    auto origBaduxPath = baduxPath;
+    auto origin_kernel_path = kernel_path;
 
-    // TODO use LoadProtocol[2] if available
-    /*
-    status = EBS->LocateDevicePath(&EFI_load_file_protocol_guid, &baduxPath, &loadDevice);
-    if (status != EFI_SUCCESS) {
-        ConOut->OutputString(ConOut, L"Couldn't get load file protocol for kernel path\r\n");
-        // return EFI_LOAD_ERROR;
-    }
-    */
-
-    status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &baduxPath, &loadDevice);
-    if (status != EFI_SUCCESS) {
+    status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &kernel_path, &loadDevice);
+    if (EFI_ERROR(EFI_SUCCESS)) {
         ConOut->OutputString(ConOut, L"Couldn't get file system protocol for kernel path\r\n");
         return EFI_LOAD_ERROR;
     }
@@ -539,7 +633,7 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsProtocol = nullptr;
 
     status = EBS->HandleProtocol(loadDevice, &EFI_simple_file_system_protocol_guid, (void **)&sfsProtocol);
-    if (status != EFI_SUCCESS) {
+    if (EFI_ERROR(EFI_SUCCESS)) {
         ConOut->OutputString(ConOut, L"Couldn't get file system protocol for kernel path\r\n");
         return EFI_LOAD_ERROR;
     }
@@ -550,7 +644,7 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
 
     EFI_FILE_PROTOCOL *fsRoot = nullptr;
     status = sfsProtocol->OpenVolume(sfsProtocol, &fsRoot);
-    if (status != EFI_SUCCESS) {
+    if (EFI_ERROR(EFI_SUCCESS)) {
         ConOut->OutputString(ConOut, L"Couldn't open volume (fs protocol)\r\n");
         return EFI_LOAD_ERROR;
     }
@@ -560,23 +654,28 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
     }
 
     EFI_FILE_PROTOCOL *kernelFile = nullptr;
-    status = fsRoot->Open(fsRoot, &kernelFile, BADUX_FILEPATH, EFI_FILE_MODE_READ, 0);
-    if (status != EFI_SUCCESS || kernelFile == nullptr) {
+    status = fsRoot->Open(fsRoot, &kernelFile, exec_path, EFI_FILE_MODE_READ, 0);
+    if (EFI_ERROR(EFI_SUCCESS) || kernelFile == nullptr) {
+        // XXX close fsroot
         ConOut->OutputString(ConOut, L"Couldn't open kernel file\r\n");
         return EFI_LOAD_ERROR;
     }
 
+    fsRoot->Close(fsRoot);
+
     EFI_FILE_INFO *kernelFileInfo = getFileInfo(kernelFile);
     if (kernelFileInfo == nullptr) {
+        // XXX close kernelFile
         ConOut->OutputString(ConOut, L"Couldn't get kernel file size\r\n");
+        return EFI_LOAD_ERROR;
     }
 
-    con_write(L"Kernel file size: "); con_write(kernelFileInfo->FileSize); con_write(L"\r\n");
+    con_write(L"Kernel file size: "); con_write(kernelFileInfo->FileSize); con_write(L"\r\n"); // XXX
 
     UINTN readAmount = kernelFileInfo->FileSize;
 
     status = kernelFile->Read(kernelFile, &readAmount, (void *)kernelAddr);
-    if (status != EFI_SUCCESS) {
+    if (EFI_ERROR(status)) {
         ConOut->OutputString(ConOut, L"Couldn't read kernel file; ");
         if (status == EFI_NO_MEDIA) {
             ConOut->OutputString(ConOut, L"status: NO_MEDIA\r\n");
@@ -600,20 +699,14 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
             ConOut->OutputString(ConOut, errcode);
             ConOut->OutputString(ConOut, L"\r\n");
         }
+        // XXX close kernelFile
         return EFI_LOAD_ERROR;
     }
     else {
-        ConOut->OutputString(ConOut, L"Loaded kernel (!!)\r\n");
+        ConOut->OutputString(ConOut, L"Loaded kernel (!!)\r\n"); // XXX
     }
 
-    uint64_t *kernelPtr = (uint64_t *)(kernelAddr + 0x1000);
-    if (kernelPtr[0] == 0 && kernelPtr[2] == 2) {
-        con_write(L"Stivale signature looks in place (!!)\r\n");
-    } else {
-        return EFI_LOAD_ERROR;
-    }
-
-    unsigned char *kernelcPtr = (unsigned char *)kernelAddr;
+    // XXX close kernelFile
 
     // Allocate space for page tables
     // We will use 4-level paging, so we need:
@@ -653,8 +746,114 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
     // Set up Stivale2 tags
     stivale2_struct stivale2_info = { "tosaithe", "0.1", nullptr };
 
+    // Build Stivale2 memory map from EFI memory map
+
+    UINTN memMapSize = 0;
+    UINTN memMapKey = 0;
+    UINTN memMapDescrSize = 0;
+    uint32_t memMapDescrVersion = 0;
+    status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+    if (status != EFI_BUFFER_TOO_SMALL) {
+        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc(memMapSize);
+    if (efiMemMap == nullptr) {
+        con_write(L"*** Memory allocation failed ***\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+    while (status == EFI_BUFFER_TOO_SMALL) {
+        // Above allocation may have increased size of memory map, so we keep trying
+        freePool(efiMemMap);
+        efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc(memMapSize);
+        if (efiMemMap == nullptr) {
+            con_write(L"*** Memory allocation failed ***\r\n");
+            return EFI_LOAD_ERROR;
+        }
+        status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+    }
+
+    if (EFI_ERROR(status)) {
+        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    // Allocate Stivale2 memmap
+    tosaithe_stivale2_memmap st2_memmap;
+    if (!st2_memmap.allocate(memMapSize / memMapDescrSize + 6)) { // +6 for wiggle room
+        con_write(L"*** Memory allocation failed ***\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    // Copy entries from EFI memory map to Stivale2 map
+    auto *efi_mem_iter = efiMemMap;
+    auto *efi_mem_end = (EFI_MEMORY_DESCRIPTOR *)((char *)efiMemMap + memMapSize);
+    while (efi_mem_iter < efi_mem_end) {
+
+        stivale2_mmap_type st_type;
+
+        switch (efi_mem_iter->Type) {
+        case EfiReservedMemoryType:
+            st_type = stivale2_mmap_type::RESERVED;
+            break;
+        case EfiLoaderCode:
+        case EfiLoaderData:
+        case EfiBootServicesCode:
+        case EfiBootServicesData:
+            st_type = stivale2_mmap_type::BOOTLOADER_RECLAIMABLE;
+            break;
+        case EfiRuntimeServicesCode:
+        case EfiRuntimeServicesData:
+            // Stivale2 has no suitable memory type to indicate EFI runtime services use.
+            // If we specify it as USABLE or RECLAIMABLE, runtime services won't be usable.
+            st_type = stivale2_mmap_type::RESERVED;
+            break;
+        case EfiConventionalMemory:
+            st_type = stivale2_mmap_type::USABLE;
+            break;
+        case EfiUnusableMemory:
+            st_type = stivale2_mmap_type::BAD_MEMORY;
+            break;
+        case EfiACPIReclaimMemory:
+            st_type = stivale2_mmap_type::ACPI_RECLAIMABLE;
+            break;
+        case EfiACPIMemoryNVS:
+            st_type = stivale2_mmap_type::ACPI_NVS;
+            break;
+        case EfiMemoryMappedIO:
+        case EfiMemoryMappedIOPortSpace:
+        case EfiPalCode:
+            st_type = stivale2_mmap_type::RESERVED;
+            break;
+        case EfiPersistentMemory:
+            // Not really clear how this should be handled.
+            st_type = stivale2_mmap_type::RESERVED;
+            break;
+        default:
+            st_type = stivale2_mmap_type::RESERVED;
+        }
+
+        st2_memmap.add_entry(st_type, efi_mem_iter->PhysicalStart,
+                efi_mem_iter->NumberOfPages * 1000u);
+        efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
+    }
+
+    ConOut->OutputString(ConOut, L"Copied all map entries\r\n"); // XXX
+
+    // TODO calculate kernelSize including bss / stack
+    uint64_t kernelSize = ((readAmount - 0x1000u + 0xFFFu) / 0x1000u) * 0x1000u;
+
+    st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernelAddr, kernelSize);
+
+    ConOut->OutputString(ConOut, L"Gonna setup framebuffer now\r\n"); // XXX
+
+    // Framebuffer setup
+
     stivale2_struct_tag_framebuffer fbinfo;
-    fbinfo.tag.identifier = 0x506461d2950408fa;
+    fbinfo.tag.identifier = STIVALE2_ST_FRAMEBUFFER_IDENT;
     fbinfo.tag.next = nullptr;
 
     EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
@@ -748,7 +947,16 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
     fbinfo.framebuffer_height = graphics->Mode->Info->VerticalResolution;
     fbinfo.framebuffer_pitch = graphics->Mode->Info->PixelsPerScanLine * (fbinfo.framebuffer_bpp / 8u);
 
-    stivale2_info.tags = &fbinfo.tag;
+    uint64_t fb_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
+
+    st2_memmap.insert_entry(stivale2_mmap_type::FRAMEBUFFER, fbinfo.framebuffer_addr, fb_size);
+    st2_memmap.sort();
+
+    // Set up tag chain: memmap, framebuffer
+
+    stivale2_struct_tag_memmap *st2_memmap_tag = st2_memmap.get();
+    stivale2_info.tags = &st2_memmap_tag->tag;
+    st2_memmap_tag->tag.next = &fbinfo.tag;
 
     // Exit boot services
 
@@ -820,13 +1028,15 @@ EFI_STATUS loadBadux(EFI_HANDLE ImageHandle)
     );
 
 
-    typedef void (*badux_entry_t)(stivale2_struct *);
-    badux_entry_t badux_entry = (badux_entry_t)(0xffffffff80201171ULL);
+    typedef void (*stivale_entry_t)(stivale2_struct *);
+    Elf64_Ehdr *elf_hdr = (Elf64_Ehdr *) kernelAddr;
+
+    stivale_entry_t stivale_entry = (stivale_entry_t) elf_hdr->e_entry;
 
     asm volatile (
             "callq *%0\n"
             :
-            : "r"(badux_entry), "D"(&stivale2_info)
+            : "r"(stivale_entry), "D"(&stivale2_info)
     );
 
     return EFI_SUCCESS;

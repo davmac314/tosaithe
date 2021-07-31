@@ -48,7 +48,7 @@ typedef struct _EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
 
 
 typedef EFI_STATUS(EFIAPI *EFI_FILE_OPEN)(IN EFI_FILE_PROTOCOL *This,
-        OUT EFI_FILE_PROTOCOL **NewHandle, IN CHAR16 *FileName, IN uint64_t OpenMode,
+        OUT EFI_FILE_PROTOCOL **NewHandle, IN const CHAR16 *FileName, IN uint64_t OpenMode,
         IN uint64_t Attributes);
 typedef EFI_STATUS(EFIAPI *EFI_FILE_CLOSE)(IN EFI_FILE_PROTOCOL *This);
 typedef EFI_STATUS(EFIAPI *EFI_FILE_DELETE)(IN EFI_FILE_PROTOCOL *This);
