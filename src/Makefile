@@ -1,6 +1,7 @@
 ELF2EFI64=elf2efi64
 
 EFICFLAGS=-ffreestanding -fshort-wchar -mabi=ms -maccumulate-outgoing-args -march=x86-64 -mno-sse -mno-mmx -mno-red-zone -fno-stack-protector
+CCFLAGS=-Wall -fno-exceptions 
 
 #tosaithe.efi: main.o
 #	ld -Map tosaithe.efi.so.map -q -Bsymbolic -Bsymbolic-functions -T link-elf-efi.lds \
@@ -18,7 +19,7 @@ tosaithe.efi: main.o
 	  --enable-reloc-section
 
 main.o: main.cc
-	g++ -g -Os $(EFICFLAGS) -c main.cc
+	g++ -g -Os $(EFICFLAGS) $(CCFLAGS) -c main.cc
 
 # Everything below here is concerned with building disk images and running in QEMU
 
