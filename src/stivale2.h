@@ -4,6 +4,18 @@
 #include <stdint.h>
 
 template <typename T> using ptr64 = T *;
+template <typename T> using funcptr64 = T;
+
+
+// Header tags, i.e. request from OS to bootloader:
+constexpr uint64_t STIVALE2_HT_FRAMEBUFFER_IDENT = 0x3ecc1bc43d0f7971;
+constexpr uint64_t STIVALE2_HT_TERMINAL_IDENT = 0xa85d499b1823be72U;
+
+// Loader tags, i.e info/feature from bootloader to OS:
+constexpr uint64_t STIVALE2_LT_MMAP_IDENT = 0x2187f79e8612de07;
+constexpr uint64_t STIVALE2_LT_CMDLINE_IDENT = 0xe5e76a1b4597a781;
+constexpr uint64_t STIVALE2_LT_FRAMEBUFFER_IDENT = 0x506461d2950408fa;
+constexpr uint64_t STIVALE2_LT_TERMINAL_IDENT = 0xc2b3f4c3233b0974;
 
 
 struct stivale2_tag {
@@ -11,10 +23,32 @@ struct stivale2_tag {
     ptr64<stivale2_tag> next;
 };
 
+
+struct stivale2_header {
+    uint64_t entry_point;
+    uint64_t stack_top;
+    uint64_t flags;
+    ptr64<stivale2_tag> tags;
+};
+
+struct stivale2_header_tag_framebuffer {
+    stivale2_tag tag;             // STIVALE2_ST_FRAMEBUFFER_IDENT
+    uint16_t framebuffer_width;
+    uint16_t framebuffer_height;
+    uint16_t framebuffer_bpp;
+};
+
+struct stivale2_header_tag_terminal {
+    stivale2_tag tag;         // STIVALE2_ST_TERMINAL_IDENT
+    uint64_t flags;           // (all bits 0)
+};
+
+
+// Information from bootloader to kernel
 struct stivale2_struct {
     char bootloader_brand[64];
     char bootloader_version[64];
-    stivale2_tag *tags;
+    ptr64<stivale2_tag> tags;
 };
 
 enum class stivale2_mmap_type : uint32_t {
@@ -36,12 +70,15 @@ struct stivale2_mmap_entry {
 };
 
 struct stivale2_struct_tag_memmap {
-    stivale2_tag tag;
+    stivale2_tag tag;  // STIVALE2_ST_MMAP_IDENT
     uint64_t entries;
     stivale2_mmap_entry memmap[];
 };
 
-const uint64_t STIVALE2_ST_MMAP_IDENT = 0x2187f79e8612de07;
+struct stivale2_cmdline_info {
+    stivale2_tag tag;       // STIVALE2_CMDLINE_LDR_TAG_ID
+    ptr64<char> cmdline;
+};
 
 struct stivale2_struct_tag_framebuffer {
     stivale2_tag tag;             // STIVALE2_ST_FRAMEBUFFER_IDENT
@@ -61,6 +98,15 @@ struct stivale2_struct_tag_framebuffer {
     uint8_t  blue_mask_shift;
 };
 
-const uint64_t STIVALE2_ST_FRAMEBUFFER_IDENT = 0x506461d2950408fa;
+typedef void (*stivale2_term_write_func_t)(const char *string, uint64_t length);
+
+struct stivale2_terminal_info {
+    stivale2_tag tag;           // STIVALE2_TERMINAL_LDR_TAG_ID
+    uint32_t flags;             // Bit 0: cols/rows values present
+    uint16_t cols;              // Number of character columns
+    uint16_t rows;              // Number of character rows
+    funcptr64<stivale2_term_write_func_t> term_write;    // stivale2_term_write() function
+};
+
 
 #endif

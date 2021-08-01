@@ -473,6 +473,9 @@ public:
             return false;
         }
         new(st2_memmap) stivale2_struct_tag_memmap();
+        st2_memmap->tag.identifier = STIVALE2_LT_MMAP_IDENT;
+        st2_memmap->tag.next = nullptr;
+        st2_memmap->entries = 0;
         capacity = capacity_p;
         return true;
     }
@@ -588,84 +591,80 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             &EFI_loaded_image_protocol_guid, (void **)&imageProto);
     // status must be EFI_SUCCESS?
 
-    EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *dpToTextProto =
-            (EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *)locateProtocol(EFI_device_path_to_text_protocol_guid);
-
-    EFI_DEVICE_PATH_PROTOCOL *imageDevicePathProto = nullptr;
+    EFI_DEVICE_PATH_PROTOCOL *imageDevicePath = nullptr;
     if (EBS->HandleProtocol(ImageHandle, &EFI_loaded_image_device_path_protocol_guid,
-            (void **)&imageDevicePathProto) != EFI_SUCCESS) {
+            (void **)&imageDevicePath) != EFI_SUCCESS) {
         ConOut->OutputString(ConOut, L"Image does not support loaded-image device path protocol.\r\n");
         return EFI_LOAD_ERROR;
     }
 
-    if (imageDevicePathProto == nullptr) {
+    if (imageDevicePath == nullptr) {
         ConOut->OutputString(ConOut, L"Firmware misbehaved; don't have loaded image device path.\r\n");
         return EFI_LOAD_ERROR;
     }
 
-    unsigned fp_index = find_file_path(imageDevicePathProto);
-
     unsigned exec_path_size = (strlen(exec_path) + 1) * sizeof(CHAR16);
-    EFI_DEVICE_PATH_PROTOCOL *kernel_path = switch_path(imageDevicePathProto, exec_path, exec_path_size);
+    EFI_DEVICE_PATH_PROTOCOL *kernel_path = switch_path(imageDevicePath, exec_path, exec_path_size);
+    if (kernel_path == nullptr) {
+        return EFI_LOAD_ERROR;
+    }
 
     // Allocate space for kernel file
     // For now we'll load the fixed 0x200000 - 0x1000, the -0x1000 is for the file header.
     EFI_PHYSICAL_ADDRESS kernelAddr = 0x200000u - 0x1000u;
-    status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, (0x200000u + 0x1000u)/0x1000u, &kernelAddr);
+    UINTN kernelPages = (0x200000u + 0x1000u)/0x1000u;
+    status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, kernelPages, &kernelAddr);
     if (EFI_ERROR(EFI_SUCCESS)) {
         ConOut->OutputString(ConOut, L"Couldn't allocate kernel memory at 0x200000u\r\n");
+        freePool(kernel_path);
         return EFI_LOAD_ERROR;
     }
 
-    ConOut->OutputString(ConOut, L"Allocated kernel memory at 0x200000u\r\n"); // XXX
+    con_write(L"Allocated kernel memory at 0x200000u\r\n"); // XXX
 
     // Try to load the kernel now
     EFI_HANDLE loadDevice;
 
-    auto origin_kernel_path = kernel_path;
-
     status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &kernel_path, &loadDevice);
+    freePool(kernel_path);
     if (EFI_ERROR(EFI_SUCCESS)) {
         ConOut->OutputString(ConOut, L"Couldn't get file system protocol for kernel path\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfsProtocol = nullptr;
 
-    status = EBS->HandleProtocol(loadDevice, &EFI_simple_file_system_protocol_guid, (void **)&sfsProtocol);
-    if (EFI_ERROR(EFI_SUCCESS)) {
+    status = EBS->HandleProtocol(loadDevice, &EFI_simple_file_system_protocol_guid,
+            (void **)&sfsProtocol);
+    if (EFI_ERROR(EFI_SUCCESS) || (sfsProtocol == nullptr /* firmware misbehaving */)) {
         ConOut->OutputString(ConOut, L"Couldn't get file system protocol for kernel path\r\n");
-        return EFI_LOAD_ERROR;
-    }
-    if (sfsProtocol == nullptr) {
-        ConOut->OutputString(ConOut, L"Couldn't get file system protocol for kernel path (firmware misbehaving)\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
     EFI_FILE_PROTOCOL *fsRoot = nullptr;
     status = sfsProtocol->OpenVolume(sfsProtocol, &fsRoot);
-    if (EFI_ERROR(EFI_SUCCESS)) {
+    if (EFI_ERROR(EFI_SUCCESS) || (fsRoot == nullptr /* firmware misbehaving */)) {
         ConOut->OutputString(ConOut, L"Couldn't open volume (fs protocol)\r\n");
-        return EFI_LOAD_ERROR;
-    }
-    if (fsRoot == nullptr) {
-        ConOut->OutputString(ConOut, L"Couldn't open volume (fs protocol); firmware misbehaving\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
     EFI_FILE_PROTOCOL *kernelFile = nullptr;
     status = fsRoot->Open(fsRoot, &kernelFile, exec_path, EFI_FILE_MODE_READ, 0);
+    fsRoot->Close(fsRoot);
     if (EFI_ERROR(EFI_SUCCESS) || kernelFile == nullptr) {
-        // XXX close fsroot
         ConOut->OutputString(ConOut, L"Couldn't open kernel file\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
-    fsRoot->Close(fsRoot);
 
     EFI_FILE_INFO *kernelFileInfo = getFileInfo(kernelFile);
     if (kernelFileInfo == nullptr) {
-        // XXX close kernelFile
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
         ConOut->OutputString(ConOut, L"Couldn't get kernel file size\r\n");
         return EFI_LOAD_ERROR;
     }
@@ -675,6 +674,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     UINTN readAmount = kernelFileInfo->FileSize;
 
     status = kernelFile->Read(kernelFile, &readAmount, (void *)kernelAddr);
+    kernelFile->Close(kernelFile);
     if (EFI_ERROR(status)) {
         ConOut->OutputString(ConOut, L"Couldn't read kernel file; ");
         if (status == EFI_NO_MEDIA) {
@@ -699,14 +699,12 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             ConOut->OutputString(ConOut, errcode);
             ConOut->OutputString(ConOut, L"\r\n");
         }
-        // XXX close kernelFile
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
     else {
         ConOut->OutputString(ConOut, L"Loaded kernel (!!)\r\n"); // XXX
     }
-
-    // XXX close kernelFile
 
     // Allocate space for page tables
     // We will use 4-level paging, so we need:
@@ -718,23 +716,53 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         uint64_t entry;
     };
 
+    // Allocate memory for page tables
+
     EFI_PHYSICAL_ADDRESS pageTablesPhysaddr;
     PDE *pageTables;
-    if (EFI_ERROR(EBS->AllocatePages(AllocateAnyPages, EfiLoaderCode, 2, &pageTablesPhysaddr))) {
+    const UINTN pageTablesPages = 2;
+    if (EFI_ERROR(EBS->AllocatePages(AllocateAnyPages, EfiLoaderCode, pageTablesPages,
+            &pageTablesPhysaddr))) {
         con_write(L"*** Memory allocation failed ***\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
+    // initialise all entries as "not present"
     pageTables = (PDE *)pageTablesPhysaddr;
     for (unsigned i = 0; i < 512; i++) {
         pageTables[i] = PDE{0}; // not present
     }
 
-    // Set up two entries to map the first 512GB at both 0 and at (high half)
+    // Paging
+    //
+    // With standard 4-level paging, there are 48 bits of linear address (bits 0-47). Addresses in
+    // proper canonical form will duplicate bit 47 up through to bit 63, effectively dividing the
+    // address space into a positive (47-63 are 0) and negative (47-63 are 1).
+    //
+    //    0xFFFF 8000 0000 0000 <-- lowest "high half" address
+    //    0xFFFF FFFF 8000 0000 <-- corresponds to (top - 2GB)
+    //
+    // Stivale2 spec says the first of the above is mapped to address 0, with a 4GB mapping "plus
+    // any additional memory map entry", whatever that means. We may as well just map as much as
+    // possible (and cover, hopefully, all available memory).
+    //
+    // Pagewise:
+    //   0xFFFF 8000 0000 0000 = PML4[256][0]
+    //   0xFFFF FFFF 8000 0000 = PML4[511][510]
+    //
+    // If we use just a single second-level page table (with 1GB pages) we could almost cover
+    // 512GB. However, we need to map the top 2GB back to physical address 0, so we can cover
+    // 510GB. TODO - that's a lot, but there could theoretically be more memory than that.
+
+    // 1st level page tables (PML4):
+    // Set up three entries to map the first 510GB at each of 0, (high half), and (top - 2GB)
     uint64_t PDPTaddress = pageTablesPhysaddr + 0x1000;
     pageTables[0] = PDE{PDPTaddress | 0x7}; // present, writable, user-accessible
+    pageTables[256] = PDE{PDPTaddress | 0x7};
     pageTables[511] = PDE{PDPTaddress | 0x7};
 
+    // 2nd level page tables:
     for (unsigned int i = 0; i < 512; i++) {
         // address || Page size (1GB page) || present, writable, user-accessible
         pageTables[512 + i] = PDE{uint64_t(i) * 1024UL*1024UL*1024UL | (1UL << 7) | 0x7UL};
@@ -755,12 +783,16 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
     if (status != EFI_BUFFER_TOO_SMALL) {
         con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
     EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc(memMapSize);
     if (efiMemMap == nullptr) {
         con_write(L"*** Memory allocation failed ***\r\n");
+        EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
@@ -771,6 +803,8 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc(memMapSize);
         if (efiMemMap == nullptr) {
             con_write(L"*** Memory allocation failed ***\r\n");
+            EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
+            EBS->FreePages(kernelAddr, kernelPages);
             return EFI_LOAD_ERROR;
         }
         status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
@@ -778,6 +812,9 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     if (EFI_ERROR(status)) {
         con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        freePool(efiMemMap);
+        EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
@@ -785,6 +822,9 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     tosaithe_stivale2_memmap st2_memmap;
     if (!st2_memmap.allocate(memMapSize / memMapDescrSize + 6)) { // +6 for wiggle room
         con_write(L"*** Memory allocation failed ***\r\n");
+        freePool(efiMemMap);
+        EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
@@ -837,29 +877,30 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         }
 
         st2_memmap.add_entry(st_type, efi_mem_iter->PhysicalStart,
-                efi_mem_iter->NumberOfPages * 1000u);
+                efi_mem_iter->NumberOfPages * 0x1000u);
         efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
     }
 
-    ConOut->OutputString(ConOut, L"Copied all map entries\r\n"); // XXX
+    freePool(efiMemMap);
 
     // TODO calculate kernelSize including bss / stack
     uint64_t kernelSize = ((readAmount - 0x1000u + 0xFFFu) / 0x1000u) * 0x1000u;
 
     st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernelAddr, kernelSize);
 
-    ConOut->OutputString(ConOut, L"Gonna setup framebuffer now\r\n"); // XXX
-
     // Framebuffer setup
 
     stivale2_struct_tag_framebuffer fbinfo;
-    fbinfo.tag.identifier = STIVALE2_ST_FRAMEBUFFER_IDENT;
+    fbinfo.tag.identifier = STIVALE2_LT_FRAMEBUFFER_IDENT;
     fbinfo.tag.next = nullptr;
 
     EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
             (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locateProtocol(EFI_graphics_output_protocol_guid);;
     if (graphics == nullptr) {
         con_write(L"No graphics protocol available.\r\n");
+        // TODO so what, just don't pass one to kernel
+        EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
@@ -938,6 +979,9 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     }
     default:
         con_write(L"Graphics mode is not supported.\r\n");
+        // TODO don't fail, just don't pass framebuffer to kernel...
+        EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
 
@@ -972,6 +1016,10 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // bit 8 = IA-32e mode enable  [0x100]
     // bit 11 = enable NX bit (no-execute)  [0x800]
 
+    // Cannot do the following in long mode, need to transition to 32-bit mode to disable paging,
+    // sigh. Since we currently only handle 4-level paging, we need to make sure 5-level paging
+    // isn't enabled:
+
     uint64_t cr4flags;
 
     asm volatile (
@@ -982,18 +1030,10 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     con_write(L"cr4 flags = "); con_write(cr4flags); con_write(L"\r\n");
     if (cr4flags & 0x1000) {
         con_write(L"Uh-oh, LA57 is enabled :(\r\n");  // TODO
+        EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
+        EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
-
-    /*
-    volatile int doWait = 1;
-    while (doWait) {
-        asm volatile ("pause\n");
-    }
-    */
-
-    // Cannot do the following in long mode, need to transition to 32-bit mode to disable paging,
-    // sigh.
 
     asm volatile (
             "cli\n"
