@@ -10,16 +10,19 @@ CCFLAGS=-Os -Wall -fno-rtti -fno-exceptions
 #	strip --strip-debug -o tosaithe-stripped.efi.so tosaithe.efi.so
 #	$(ELF2EFI64) --subsystem=10 tosaithe-stripped.efi.so tosaithe.efi
 
-tosaithe.efi: main.o
+tosaithe.efi: main.o stivale2.o
 	ld --strip-debug -nostdlib -Bsymbolic \
-	  main.o \
+	  main.o stivale2.o \
 	  -T link-elf-efi.lds -Map=tosaithe.efi.map \
 	  -o tosaithe.efi --oformat pei-x86-64 \
 	  -m i386pep --subsystem 10 --image-base 0 \
 	  --enable-reloc-section
 
 main.o: main.cc
-	g++ -g -Os $(EFICFLAGS) $(CCFLAGS) -c main.cc
+	g++ $(EFICFLAGS) $(CCFLAGS) -c main.cc
+
+stivale2.o: stivale2.cc
+	g++ $(EFICFLAGS) $(CCFLAGS) -c stivale2.cc
 
 # Everything below here is concerned with building disk images and running in QEMU
 
@@ -56,5 +59,5 @@ run-in-qemu: image-dir
 	  -debugcon file:ovmf-debug.log -global isa-debugcon.iobase=0x402
 
 clean:
-	rm -f main.o tosaithe.efi.so tosaithe.efi disk.img
+	rm -f main.o stivale2.o tosaithe.efi.so tosaithe.efi disk.img
 	rm -rf image
