@@ -27,11 +27,24 @@ SECTIONS {
         *(.bss)
     }
 
+    /* Relocations at the end. We could also put them before .bss, but this theoretically gives
+     * the option of disposing of relocations after load (without leaving a hole). We must put
+     * .reloc after .text/.data/.rodata since it must come after sections it contains relocations
+     * for, apparently. */
+
+    . = ALIGN(0x1000);
+
+    .reloc . : {
+        *(.reloc)
+    }
+
     /* Debug sections: */
     /* .debug_info .debug_abbrev .debug_loc .debug_aranges .debug_line .debug_macinfo .debug_str */
 
-    /* if not wanted, there's no need to change this: just pass -s (strip)
-     * to ld */
+    /* Unfortunately, this does not work. You must use --strip-debug at link time or binutils
+     * produces a binary that OVMF (at least) refuses to load. */
+
+    . = ALIGN(0x1000);
 
     .debug_aranges 0 :  { *(.debug_aranges)  }
     .debug_str 0 :      { *(.debug_str)      }
@@ -44,6 +57,8 @@ SECTIONS {
     .debug_pubtypes 0 : { *(.debug_pubtypes) }
     .debug_frame 0 :    { *(.debug_frame)    }
     .debug_line 0 :     { *(.debug_line)     }
+
+    /* sections to discard */
 
     /DISCARD/ : {
         
