@@ -7,7 +7,7 @@
 #define OUT
 #define OPTIONAL
 #define CONST const
-#define EFIAPI
+#define EFIAPI __attribute__((ms_abi))
 
 // status codes
 #define EFI_SUCCESS 0

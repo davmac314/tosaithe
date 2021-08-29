@@ -1,7 +1,10 @@
 ELF2EFI64=elf2efi64
 
-EFICFLAGS=-ffreestanding -fshort-wchar -mabi=ms -maccumulate-outgoing-args -march=x86-64 -mno-sse -mno-mmx -mno-red-zone -fno-stack-protector
-CCFLAGS=-Os -Wall -fno-rtti -fno-exceptions
+EFICFLAGS ?= -ffreestanding -fshort-wchar -maccumulate-outgoing-args -march=x86-64 -mno-sse -mno-mmx -mno-red-zone -fno-stack-protector
+# -mabi=ms
+CCFLAGS ?= -g -Os -Wall -fno-rtti
+
+all: tosaithe.efi
 
 #tosaithe.efi: main.o
 #	ld -Map tosaithe.efi.so.map -q -Bsymbolic -Bsymbolic-functions -T link-elf-efi.lds \
@@ -10,19 +13,29 @@ CCFLAGS=-Os -Wall -fno-rtti -fno-exceptions
 #	strip --strip-debug -o tosaithe-stripped.efi.so tosaithe.efi.so
 #	$(ELF2EFI64) --subsystem=10 tosaithe-stripped.efi.so tosaithe.efi
 
-tosaithe.efi: main.o stivale2.o
+# We have to link twice: the first time as ELF, to produce the .eh_frame_hdr section (--eh-frame-hdr).
+# The second time to convert to PEI.
+tosaithe.efi: main.o stivale2.o cxxsupport.o
+	ld -q -nostdlib -Bsymbolic -T link-elf.lds \
+	  main.o stivale2.o cxxsupport.o \
+	  --eh-frame-hdr \
+	  -L ../lib -lunwind -lcxxabi -lbmcxx \
+	  -Map=tosaithe.efi.so.map -o tosaithe.efi.so
 	ld --strip-debug -nostdlib -Bsymbolic \
-	  main.o stivale2.o \
+	  tosaithe.efi.so \
 	  -T link-elf-efi.lds -Map=tosaithe.efi.map \
 	  -o tosaithe.efi --oformat pei-x86-64 \
 	  -m i386pep --subsystem 10 --image-base 0 \
 	  --enable-reloc-section
 
 main.o: main.cc
-	g++ $(EFICFLAGS) $(CCFLAGS) -c main.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CCFLAGS) -c main.cc
 
 stivale2.o: stivale2.cc
-	g++ $(EFICFLAGS) $(CCFLAGS) -c stivale2.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CCFLAGS) -c stivale2.cc
+
+cxxsupport.o: cxxsupport.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CCFLAGS) -c cxxsupport.cc
 
 # Everything below here is concerned with building disk images and running in QEMU
 

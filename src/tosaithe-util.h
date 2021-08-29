@@ -2,6 +2,7 @@
 #define INCLUDED_TOSAITHE_UTIL_H
 
 #include "uefi.h"
+#include "uefi-media-file.h"
 
 #include <stddef.h>
 
