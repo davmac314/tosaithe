@@ -1,8 +1,9 @@
-ELF2EFI64=elf2efi64
-
 EFICFLAGS ?= -ffreestanding -fshort-wchar -maccumulate-outgoing-args -march=x86-64 -mno-sse -mno-mmx -mno-red-zone -fno-stack-protector
 # -mabi=ms
 CXXFLAGS ?= -g -Os -Wall -fno-rtti
+
+# (Not using efl2efi any more)
+#ELF2EFI64=elf2efi64
 
 all: tosaithe.efi
 
