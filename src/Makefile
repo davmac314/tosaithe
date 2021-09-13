@@ -2,7 +2,7 @@ ELF2EFI64=elf2efi64
 
 EFICFLAGS ?= -ffreestanding -fshort-wchar -maccumulate-outgoing-args -march=x86-64 -mno-sse -mno-mmx -mno-red-zone -fno-stack-protector
 # -mabi=ms
-CCFLAGS ?= -g -Os -Wall -fno-rtti
+CXXFLAGS ?= -g -Os -Wall -fno-rtti
 
 all: tosaithe.efi
 
@@ -29,13 +29,13 @@ tosaithe.efi: main.o stivale2.o cxxsupport.o
 	  --enable-reloc-section
 
 main.o: main.cc
-	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CCFLAGS) -c main.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c main.cc
 
 stivale2.o: stivale2.cc
-	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CCFLAGS) -c stivale2.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c stivale2.cc
 
 cxxsupport.o: cxxsupport.cc
-	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CCFLAGS) -c cxxsupport.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c cxxsupport.cc
 
 # Everything below here is concerned with building disk images and running in QEMU
 
