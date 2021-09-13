@@ -1,0 +1,5 @@
+*.o
+*.a
+/bmcxxabi
+/bmunwind
+/libbmcxx
