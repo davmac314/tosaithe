@@ -16,7 +16,7 @@ inline void * operator new(size_t count, void *addr)
 }
 
 // Locate a protocol by finding a singular handle supporting it
-inline void *locateProtocol(const EFI_GUID &guid)
+inline void *locate_protocol(const EFI_GUID &guid)
 {
     void *interfacePtr = nullptr;
 
@@ -44,7 +44,7 @@ inline void *locateProtocol(const EFI_GUID &guid)
     return interfacePtr;
 }
 
-inline void *alloc(unsigned size)
+inline void *alloc_pool(unsigned size)
 {
     void *allocdBuf;
     EFI_STATUS status = EBS->AllocatePool(EfiLoaderCode, size, &allocdBuf);
@@ -54,7 +54,7 @@ inline void *alloc(unsigned size)
     return allocdBuf;
 }
 
-inline void freePool(void *buf)
+inline void free_pool(void *buf)
 {
     EBS->FreePool(buf);
 }
@@ -93,7 +93,7 @@ inline unsigned strlen(const CHAR16 *str)
 inline CHAR16 *strdup(CHAR16 *str)
 {
     unsigned len = strlen(str);
-    CHAR16 *rbuf = (CHAR16 *) alloc(len);
+    CHAR16 *rbuf = (CHAR16 *) alloc_pool(len);
     if (rbuf == nullptr) {
         return nullptr;
     }
@@ -159,7 +159,7 @@ inline EFI_DEVICE_PATH_PROTOCOL *switch_path(const EFI_DEVICE_PATH_PROTOCOL *dp,
     unsigned new_node_size = new_path_len + 4;
     unsigned req_size = path_offs + new_node_size + 4; // terminator node
 
-    unsigned char *allocdBuf = (unsigned char *) alloc(req_size);
+    unsigned char *allocdBuf = (unsigned char *) alloc_pool(req_size);
     if (allocdBuf == nullptr) {
         con_write(L"*** Pool allocation failed ***\r\n");
         return nullptr;
@@ -192,19 +192,19 @@ inline EFI_DEVICE_PATH_PROTOCOL *switch_path(const EFI_DEVICE_PATH_PROTOCOL *dp,
     return (EFI_DEVICE_PATH_PROTOCOL *)allocdBuf;
 }
 
-inline EFI_FILE_INFO *getFileInfo(EFI_FILE_PROTOCOL *file)
+inline EFI_FILE_INFO *get_file_info(EFI_FILE_PROTOCOL *file)
 {
     UINTN bufferSize = 128;
-    EFI_FILE_INFO *buffer = (EFI_FILE_INFO *) alloc(bufferSize);
+    EFI_FILE_INFO *buffer = (EFI_FILE_INFO *) alloc_pool(bufferSize);
     if (buffer == nullptr) {
         return nullptr;
     }
 
     EFI_STATUS status = file->GetInfo(file, &EFI_file_info_id, &bufferSize, buffer);
     if (status == EFI_BUFFER_TOO_SMALL) {
-        freePool(buffer);
+        free_pool(buffer);
         // bufferSize has now been updated:
-        buffer = (EFI_FILE_INFO *) alloc(bufferSize);
+        buffer = (EFI_FILE_INFO *) alloc_pool(bufferSize);
         if (buffer == nullptr) {
             return nullptr;
         }
@@ -213,7 +213,7 @@ inline EFI_FILE_INFO *getFileInfo(EFI_FILE_PROTOCOL *file)
     }
 
     if (EFI_ERROR(status)) {
-        freePool(buffer);
+        free_pool(buffer);
         return nullptr;
     }
 

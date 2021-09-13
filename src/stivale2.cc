@@ -21,7 +21,7 @@ class tosaithe_stivale2_memmap {
         uint32_t newcapacity = capacity + 6; // bump capacity by arbitrary amount
         uint32_t req_size = sizeof(stivale2_struct_tag_memmap)
                 + sizeof(stivale2_mmap_entry) * newcapacity;
-        stivale2_struct_tag_memmap *newmap = (stivale2_struct_tag_memmap *) alloc(req_size);
+        stivale2_struct_tag_memmap *newmap = (stivale2_struct_tag_memmap *) alloc_pool(req_size);
         if (newmap == nullptr) {
             return false;
         }
@@ -32,7 +32,7 @@ class tosaithe_stivale2_memmap {
             new(&newmap->memmap[entries]) stivale2_mmap_entry(st2_memmap->memmap[entries]);
         }
 
-        freePool(st2_memmap);
+        free_pool(st2_memmap);
         st2_memmap = newmap;
         capacity = newcapacity;
 
@@ -44,7 +44,7 @@ public:
     {
         uint32_t req_size = sizeof(stivale2_struct_tag_memmap)
                 + sizeof(stivale2_mmap_entry) * capacity_p;
-        st2_memmap = (stivale2_struct_tag_memmap *) alloc(req_size);
+        st2_memmap = (stivale2_struct_tag_memmap *) alloc_pool(req_size);
         if (st2_memmap == nullptr) {
             return false;
         }
@@ -155,7 +155,7 @@ public:
     ~tosaithe_stivale2_memmap()
     {
         if (st2_memmap != nullptr) {
-            freePool(st2_memmap);
+            free_pool(st2_memmap);
         }
     }
 };
@@ -192,7 +192,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, kernelPages, &kernelAddr);
     if (EFI_ERROR(EFI_SUCCESS)) {
         ConOut->OutputString(ConOut, L"Couldn't allocate kernel memory at 0x200000u\r\n");
-        freePool(kernel_path);
+        free_pool(kernel_path);
         return EFI_LOAD_ERROR;
     }
 
@@ -202,7 +202,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     EFI_HANDLE loadDevice;
 
     status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &kernel_path, &loadDevice);
-    freePool(kernel_path);
+    free_pool(kernel_path);
     if (EFI_ERROR(EFI_SUCCESS)) {
         ConOut->OutputString(ConOut, L"Couldn't get file system protocol for kernel path\r\n");
         EBS->FreePages(kernelAddr, kernelPages);
@@ -236,8 +236,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-
-    EFI_FILE_INFO *kernelFileInfo = getFileInfo(kernelFile);
+    EFI_FILE_INFO *kernelFileInfo = get_file_info(kernelFile);
     if (kernelFileInfo == nullptr) {
         EBS->FreePages(kernelAddr, kernelPages);
         kernelFile->Close(kernelFile);
@@ -364,7 +363,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc(memMapSize);
+    EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
     if (efiMemMap == nullptr) {
         con_write(L"*** Memory allocation failed ***\r\n");
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
@@ -375,8 +374,8 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
     while (status == EFI_BUFFER_TOO_SMALL) {
         // Above allocation may have increased size of memory map, so we keep trying
-        freePool(efiMemMap);
-        efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc(memMapSize);
+        free_pool(efiMemMap);
+        efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
         if (efiMemMap == nullptr) {
             con_write(L"*** Memory allocation failed ***\r\n");
             EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
@@ -388,7 +387,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     if (EFI_ERROR(status)) {
         con_write(L"*** Could not retrieve EFI memory map ***\r\n");
-        freePool(efiMemMap);
+        free_pool(efiMemMap);
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
         EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
@@ -398,7 +397,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     tosaithe_stivale2_memmap st2_memmap;
     if (!st2_memmap.allocate(memMapSize / memMapDescrSize + 6)) { // +6 for wiggle room
         con_write(L"*** Memory allocation failed ***\r\n");
-        freePool(efiMemMap);
+        free_pool(efiMemMap);
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
         EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
@@ -457,7 +456,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
     }
 
-    freePool(efiMemMap);
+    free_pool(efiMemMap);
 
     // TODO calculate kernelSize including bss / stack
     uint64_t kernelSize = ((readAmount - 0x1000u + 0xFFFu) / 0x1000u) * 0x1000u;
@@ -471,7 +470,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     fbinfo.tag.next = nullptr;
 
     EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
-            (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locateProtocol(EFI_graphics_output_protocol_guid);;
+            (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locate_protocol(EFI_graphics_output_protocol_guid);;
     if (graphics == nullptr) {
         con_write(L"No graphics protocol available.\r\n");
         // TODO so what, just don't pass one to kernel

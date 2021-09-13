@@ -69,13 +69,13 @@ void *load_entire_file(EFI_DEVICE_PATH_PROTOCOL *devPath, UINTN *bufSize)
 
     fsRoot->Close(fsRoot);
 
-    EFI_FILE_INFO *loadFileInfo = getFileInfo(fileToLoad);
+    EFI_FILE_INFO *loadFileInfo = get_file_info(fileToLoad);
     if (loadFileInfo == nullptr) {
         ConOut->OutputString(ConOut, L"Couldn't get file size\r\n");
     }
 
     UINTN readAmount = loadFileInfo->FileSize;
-    freePool(loadFileInfo);
+    free_pool(loadFileInfo);
 
     void *loadAddress = alloc(readAmount);
     if (loadAddress == nullptr) {
@@ -123,7 +123,7 @@ static EFI_DEVICE_PATH_PROTOCOL *resolve_relative_path(EFI_HANDLE image_handle, 
     return full_path;
 }
 
-static EFI_STATUS chainLoad(EFI_HANDLE ImageHandle, const CHAR16 *ExecPath, const CHAR16 *cmdLine)
+static EFI_STATUS chain_load(EFI_HANDLE ImageHandle, const CHAR16 *ExecPath, const CHAR16 *cmdLine)
 {
     EFI_DEVICE_PATH_PROTOCOL *chainPath = resolve_relative_path(ImageHandle, ExecPath);
     if (chainPath == nullptr) {
@@ -135,7 +135,7 @@ static EFI_STATUS chainLoad(EFI_HANDLE ImageHandle, const CHAR16 *ExecPath, cons
     EFI_HANDLE loadedHandle = nullptr;
     EFI_STATUS status = EBS->LoadImage(true, ImageHandle, chainPath, nullptr, 0, &loadedHandle);
 
-    freePool(chainPath);
+    free_pool(chainPath);
 
     if (EFI_ERROR(status)) {
         con_write(L"Couldn't chain-load image: ");

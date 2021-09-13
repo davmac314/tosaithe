@@ -24,10 +24,10 @@ void abort(void) {
 
 extern "C"
 void *malloc(size_t size) {
-    return alloc(size);
+    return alloc_pool(size);
 }
 
 extern "C"
 void free(void *v) {
-    return freePool(v);
+    return free_pool(v);
 }
