@@ -477,6 +477,11 @@ EfiMain (
         con_write(entry.description.c_str());
         con_write(L"\r\n");
         i++;
+
+        if (i == 10) {
+            con_write(L"( too many entries! )\r\n");
+            break;
+        }
     }
 
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
