@@ -585,52 +585,99 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    con_write(L"lowest vaddr: "); con_write_hex(lowest_vaddr); con_write(L"\r\n");
-    con_write(L"highest vaddr: "); con_write_hex(highest_vaddr); con_write(L"\r\n");
-    con_write(L"file_voffs = "); con_write_hex(file_voffs); con_write(L"\r\n");
-
     // Need to account for values in upper half
     const uintptr_t high_half_addr = 0xFFFFFFFF80000000;
 
     uintptr_t adj_voffs = file_voffs;
     if (adj_voffs >= high_half_addr) adj_voffs -= high_half_addr;
 
-    // Re-locate if necessary, and load the rest of the kernel:
+    // The address of kernel so far loaded (+1)
+    uintptr_t kernel_current_limit = kernel_addr + kernel_pages * 0x1000u;
+    // The limit of the current allocation for kernel (+1)
+    uintptr_t kernel_alloc_limit = kernel_current_limit;
+    // The page address of the kernel allocation
+    uintptr_t kernel_page_addr = kernel_addr;
 
+    // Re-locate if necessary:
     if (adj_voffs != kernel_addr) {
-        // TODO relocate instead of erroring out!
-        con_write(L"Unsupported load address\r\n");
-        EBS->FreePages(kernel_addr, kernel_pages);
-        kernel_file->Close(kernel_file);
-        return EFI_LOAD_ERROR;
-    }
+        uintptr_t new_kernel_limit = adj_voffs + kernel_current_limit - kernel_addr;
+        uintptr_t new_alloc_limit = (new_kernel_limit + 0xFFFu) & ~uintptr_t(0xFFFu);
+        uintptr_t new_kernel_page_addr = adj_voffs & ~uintptr_t(0xFFFu);
 
-    // Allocate memory for the rest of the kernel, including any bss
-    uintptr_t kernel_limit = std::max(kernel_file_size, highest_vaddr - file_voffs);
-    UINTN pages_required = (kernel_limit + 0xFFFu) / 0x1000u;
-    uintptr_t kernel_extra_base = kernel_addr + kernel_pages * 0x1000u;
-    if (pages_required > kernel_pages) {
-        UINTN additional_reqd = pages_required - kernel_pages;
+        uintptr_t alloc_from;
+        UINTN alloc_pages;
+        uintptr_t free_from;
+        UINTN free_pages;
 
-        status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, additional_reqd, &kernel_extra_base);
+        if (adj_voffs < kernel_addr && new_kernel_limit > kernel_addr) {
+            // moved backwards, overlapping
+            alloc_from = new_kernel_page_addr;
+            alloc_pages = (kernel_addr - alloc_from) / 0x1000u;
+            free_from = new_alloc_limit;
+            free_pages = (kernel_alloc_limit - free_from) / 0x1000u;
+        }
+        else if (adj_voffs > kernel_addr && adj_voffs < kernel_current_limit) {
+            // moved forwards, overlapping
+            alloc_from = kernel_alloc_limit;
+            alloc_pages = (new_alloc_limit - kernel_alloc_limit) / 0x1000u;
+            free_from = kernel_page_addr;
+            free_pages = (new_kernel_page_addr - free_from) / 0x1000u;
+        }
+        else {
+            // no overlap
+            alloc_from = new_kernel_page_addr;
+            alloc_pages = (new_alloc_limit - alloc_from) / 0x1000u;
+            free_from = kernel_page_addr;
+            free_pages = kernel_pages;
+        }
+
+        status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, alloc_pages, &alloc_from);
         if (EFI_ERROR(EFI_SUCCESS)) {
+            // TODO if PIE, can relocate completely
             con_write(L"Couldn't allocate kernel memory\r\n");
-            EBS->FreePages(kernel_addr, kernel_pages);
+            EBS->FreePages(kernel_page_addr, kernel_pages);
             kernel_file->Close(kernel_file);
             return EFI_LOAD_ERROR;
         }
 
-        kernel_pages += pages_required;
+        memmove((void *)adj_voffs, (void *)kernel_addr, kernel_pages * 0x1000u);
+        EBS->FreePages(free_from, free_pages);
+
+        kernel_current_limit = new_kernel_limit;
+        kernel_alloc_limit = new_alloc_limit;
+        kernel_page_addr = new_kernel_page_addr;
+        kernel_pages = new_alloc_limit - new_kernel_page_addr;
+
+        kernel_addr = adj_voffs;
+        elf_hdr = (Elf64_Ehdr *)kernel_addr;
+    }
+
+    // Allocate memory for the rest of the kernel, including any bss
+    uintptr_t kernel_limit = std::max(kernel_file_size, highest_vaddr - file_voffs);
+    UINTN total_pages_required = (kernel_limit + kernel_addr + 0xFFFu) / 0x1000u;
+    if (total_pages_required > kernel_pages) {
+        UINTN additional_reqd = total_pages_required - kernel_pages;
+
+        status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, additional_reqd, &kernel_alloc_limit);
+        if (EFI_ERROR(EFI_SUCCESS)) {
+            // TODO if PIE, can relocate completely
+            con_write(L"Couldn't allocate kernel memory\r\n");
+            EBS->FreePages(kernel_page_addr, kernel_pages);
+            kernel_file->Close(kernel_file);
+            return EFI_LOAD_ERROR;
+        }
+
+        kernel_pages = total_pages_required;
     }
 
     // Read the entire kernel image
     read_amount = kernel_file_size - first_chunk;
 
     if (read_amount > 0) {
-        status = kernel_file->Read(kernel_file, &read_amount, (void *)kernel_extra_base);
+        status = kernel_file->Read(kernel_file, &read_amount, (void *)kernel_current_limit);
         if (EFI_ERROR(status)) {
             con_write(L"Couldn't read kernel file\r\n");
-            EBS->FreePages(kernel_addr, kernel_pages);
+            EBS->FreePages(kernel_page_addr, kernel_pages);
             kernel_file->Close(kernel_file);
             return EFI_LOAD_ERROR;
         }
@@ -647,7 +694,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     auto num_section_hdrs = elf_hdr->e_shnum;
     if (num_section_hdrs == 0) { // real number is in first section entry, don't support that yet
         con_write(L"Unsupported ELF structure\r\n");
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -657,7 +704,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             || elf_hdr->e_shstrndx >= num_section_hdrs
             || elf_hdr->e_shstrndx == 0) {
         con_write(L"Bad ELF structure\r\n");
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -673,14 +720,14 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         uint16_t name_offs = section_hdr->sh_name;
         if (name_offs >= sh_string_section->sh_size) {
             con_write(L"Bad ELF structure\r\n");
-            EBS->FreePages(kernel_addr, kernel_pages);
+            EBS->FreePages(kernel_page_addr, kernel_pages);
             return EFI_LOAD_ERROR;
         }
         std::string_view section_name { sh_string_start + name_offs, sh_string_section->sh_size - name_offs };
         auto nul_pos = section_name.find('\0');
         if (nul_pos == std::string_view::npos) {
             con_write(L"Bad ELF structure\r\n");
-            EBS->FreePages(kernel_addr, kernel_pages);
+            EBS->FreePages(kernel_page_addr, kernel_pages);
             return EFI_LOAD_ERROR;
         }
         section_name = section_name.substring(0, nul_pos);
@@ -696,7 +743,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     if (sv2_header == nullptr) {
         con_write(L"Stivale2 header not found\r\n");
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -738,7 +785,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (EFI_ERROR(EBS->AllocatePages(AllocateAnyPages, EfiLoaderCode, pageTablesPages,
             &pageTablesPhysaddr))) {
         con_write(L"*** Memory allocation failed ***\r\n");
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -798,7 +845,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (status != EFI_BUFFER_TOO_SMALL) {
         con_write(L"*** Could not retrieve EFI memory map ***\r\n");
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -809,7 +856,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         if (efiMemMap == nullptr) {
             con_write(L"*** Memory allocation failed ***\r\n");
             EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
-            EBS->FreePages(kernel_addr, kernel_pages);
+            EBS->FreePages(kernel_page_addr, kernel_pages);
             return EFI_LOAD_ERROR;
         }
 
@@ -821,7 +868,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             if (efiMemMap == nullptr) {
                 con_write(L"*** Memory allocation failed ***\r\n");
                 EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
-                EBS->FreePages(kernel_addr, kernel_pages);
+                EBS->FreePages(kernel_page_addr, kernel_pages);
                 return EFI_LOAD_ERROR;
             }
             status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
@@ -833,7 +880,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (EFI_ERROR(status)) {
         con_write(L"*** Could not retrieve EFI memory map ***\r\n");
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -842,7 +889,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (!st2_memmap.allocate(memMapSize / memMapDescrSize + 6)) { // +6 for wiggle room
         con_write(L"*** Memory allocation failed ***\r\n");
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -901,9 +948,8 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     efiMemMapPtr.reset();
 
-    uint64_t kernelSize = kernel_pages * 0x1000u;
-
-    st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_addr, kernelSize);
+    uint64_t kernel_size = kernel_pages * 0x1000u;
+    st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_page_addr, kernel_size);
 
     // Framebuffer setup
 
@@ -917,7 +963,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         con_write(L"No graphics protocol available.\r\n");
         // TODO so what, just don't pass one to kernel
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -998,7 +1044,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         con_write(L"Graphics mode is not supported.\r\n");
         // TODO don't fail, just don't pass framebuffer to kernel...
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
@@ -1048,7 +1094,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (cr4flags & 0x1000) {
         con_write(L"Uh-oh, LA57 was enabled by firmware :(\r\n");  // TODO
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
-        EBS->FreePages(kernel_addr, kernel_pages);
+        EBS->FreePages(kernel_page_addr, kernel_pages);
         return EFI_LOAD_ERROR;
     }
 
