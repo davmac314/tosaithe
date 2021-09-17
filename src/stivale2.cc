@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <string>
 #include <memory>
 #include <new>
 
@@ -163,6 +165,158 @@ public:
     }
 };
 
+// An entry in a descriptor table
+struct DT_entry {
+    uint64_t data;
+};
+
+enum class dt_size_t {
+    s16, s32, s64
+};
+
+struct GDT_entry_reg {
+    uint16_t limit_0_15; // limit bits 0-15
+    uint16_t base_0_15;  // base bits 0-15
+
+    // 5th byte (offset 4)
+    uint8_t base_16_23;  // base bits 16-23
+
+    // 6th byte
+    uint8_t entry_type : 4;
+    uint8_t flag_s : 1;  // descriptor type 0=system 1=code/data (affects entry_type meaning)
+    uint8_t dpl : 2;  // privilege level required to access (0 = highest privilege)
+    uint8_t p : 1;    // segment present (if 0, loading descriptor will trap)
+
+    // 7th byte
+    uint8_t limit_16_19 : 4;
+    uint8_t available : 1; // available for use by OS
+    uint8_t flag_L : 1;    // 1=64-bit code segment, 0=32/16 bit segment or data segment
+    uint8_t flag_sz : 1; // 0=16 bit, 1=32 bit; must be 0 for 64-bit segment (i.e. if L is 1)
+                         // 32/16 bit: affects eg default operand size for code segments, stack pointer
+                         // size for stack segment, upper limit of expand-down segment
+    uint8_t flag_gr : 1; // granularity, if set limit is in 4kb granularity (otherwise byte)
+
+    // Final byte
+    uint8_t base_24_31;
+
+    // Constructor with a standard set of parameters. Will create a maximally-sized segment (0
+    // base, 0xFF...FF limit) and DPL=0 (i.e. highest privilege level).
+    constexpr GDT_entry_reg(uint32_t base, uint32_t limit, bool g4k_limit,
+            uint16_t entry_type_p, dt_size_t size_p) :
+        limit_0_15(limit & 0xFFFFu),
+        base_0_15(base & 0xFFFFu),
+        base_16_23((base & 0xFF0000u) >> 16),
+        entry_type(entry_type_p & 0x0Fu),
+        flag_s(((entry_type_p & 0x10u) == 0) ? 0 : 1),
+        dpl(0),
+        p(1),
+        limit_16_19((limit & 0x0F0000u) >> 16),
+        available(0),
+        flag_L((size_p == dt_size_t::s64) ? 1 : 0),
+        flag_sz((size_p == dt_size_t::s16 || size_p == dt_size_t::s64) ? 0 : 1),
+        flag_gr(g4k_limit),
+        base_24_31((base & 0xFF000000u) >> 24)
+    {
+    }
+
+    // Constructor with a standard set of parameters, and a specified privilege level. Segment
+    // will be maximally sized (0 base, 0xFF....FF limit).
+    constexpr GDT_entry_reg(uint32_t base, uint32_t limit, bool g4k_limit,
+            uint16_t entry_type_p, dt_size_t size_p, uint8_t dpl_p) :
+        limit_0_15(limit & 0xFFFFu),
+        base_0_15(base & 0xFFFFu),
+        base_16_23((base & 0xFF0000u) >> 16),
+        entry_type(entry_type_p & 0x0Fu),
+        flag_s(((entry_type_p & 0x10u) == 0) ? 0 : 1),
+        dpl(dpl_p),
+        p(1),
+        limit_16_19((limit & 0x0F0000u) >> 16),
+        available(0),
+        flag_L((size_p == dt_size_t::s64) ? 1 : 0),
+        flag_sz((size_p == dt_size_t::s16 || size_p == dt_size_t::s64) ? 0 : 1),
+        flag_gr(g4k_limit),
+        base_24_31((base & 0xFF000000u) >> 24)
+    {
+    }
+
+    constexpr operator DT_entry()
+    {
+        return DT_entry
+            {
+                (uint64_t)limit_0_15
+                | (uint64_t(base_0_15) << 16)
+                | (uint64_t(base_16_23) << 32)
+                | (uint64_t(entry_type) << 40)
+                | (uint64_t(flag_s) << 44)
+                | (uint64_t(dpl) << 45)
+                | (uint64_t(p) << 47)
+                | (uint64_t(limit_16_19) << 48)
+                | (uint64_t(available) << 52)
+                | (uint64_t(flag_L) << 53)
+                | (uint64_t(flag_sz) << 54)
+                | (uint64_t(flag_gr) << 55)
+                | (uint64_t(base_24_31) << 56)
+            };
+    }
+};
+
+// For the following types, bit 0 is "accessed" bit, set by CPU on access. For code/data we set
+// the 5th bit (hence "16+" in all values). This is copied into the "S" flag, it isn't technically
+// part of the type.
+
+const static uint16_t DT_RWDATA = 16+2;
+const static uint16_t DT_ROCODE = 16+10; // code, execute/read (no write)
+
+// readable 16-bit code segment, base 0, 64k limit, non-conforming
+inline constexpr GDT_entry_reg cons_DT_code16_descriptor()
+{
+    return GDT_entry_reg(0, 0xFFFFu, false, DT_ROCODE, dt_size_t::s16);
+}
+
+inline constexpr GDT_entry_reg cons_DT_data16_descriptor()
+{
+    return GDT_entry_reg(0, 0xFFFFu, false, DT_RWDATA, dt_size_t::s16);
+}
+
+// readable 32-bit code segment, base 0, 4GB limit (4kb granular), non-conforming
+inline constexpr GDT_entry_reg cons_DT_code32_descriptor()
+{
+    return GDT_entry_reg(0, 0x000FFFFFu, true, DT_ROCODE, dt_size_t::s32);
+}
+
+// standard (grows-up) 32-bit data segment, base 0, 4GB limit (4kb granular)
+inline constexpr GDT_entry_reg cons_DT_data32_descriptor()
+{
+    return GDT_entry_reg(0, 0x000FFFFFu, true, DT_RWDATA, dt_size_t::s32);
+}
+
+// readable 64-bit code segment, base 0, 4GB limit (ignored), non-conforming
+inline constexpr GDT_entry_reg cons_DT_code64_descriptor()
+{
+    // Note base and limit will be ignored
+    return GDT_entry_reg(0, 0x000FFFFFu, true, DT_ROCODE, dt_size_t::s64);
+}
+
+// Global descriptor table, for kernel entry, as per Stivale 2 spec
+DT_entry GDT_table[] = {
+        {0}, // NULL
+
+        // ---- 1 ----
+
+        cons_DT_code16_descriptor(),
+        cons_DT_data16_descriptor(),
+        cons_DT_code32_descriptor(),
+        cons_DT_data32_descriptor(),
+
+        // ---- 5 ----
+
+        cons_DT_code64_descriptor(),
+
+        // Stivale says this should be a "64-bit data descriptor". There is no such thing...
+        // A regular 32-bit data descriptor should be fine, the base/limit will be ignored.
+        cons_DT_data32_descriptor(),
+};
+
 EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine)
 {
     EFI_LOADED_IMAGE_PROTOCOL *imageProto;
@@ -178,7 +332,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     }
 
     if (imageDevicePath == nullptr) {
-        ConOut->OutputString(ConOut, L"Firmware misbehaved; don't have loaded image device path.\r\n");
+        con_write(L"Firmware misbehaved; don't have loaded image device path.\r\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -189,18 +343,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    // Allocate space for kernel file
-    // For now we'll load the fixed 0x200000 - 0x1000, the -0x1000 is for the file header.
-    EFI_PHYSICAL_ADDRESS kernelAddr = 0x200000u - 0x1000u;
-    UINTN kernelPages = (0x200000u + 0x1000u)/0x1000u;
-    status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, kernelPages, &kernelAddr);
-    if (EFI_ERROR(EFI_SUCCESS)) {
-        ConOut->OutputString(ConOut, L"Couldn't allocate kernel memory at 0x200000u\r\n");
-        return EFI_LOAD_ERROR;
-    }
-
-    con_write(L"Allocated kernel memory at 0x200000u\r\n"); // XXX
-
     // Try to load the kernel now
     EFI_HANDLE loadDevice;
 
@@ -208,8 +350,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &remaining_path, &loadDevice);
     kernel_path = nullptr;
     if (EFI_ERROR(EFI_SUCCESS)) {
-        ConOut->OutputString(ConOut, L"Couldn't get file system protocol for kernel path\r\n");
-        EBS->FreePages(kernelAddr, kernelPages);
+        con_write(L"Couldn't get file system protocol for kernel path\r\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -218,16 +359,14 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     status = EBS->HandleProtocol(loadDevice, &EFI_simple_file_system_protocol_guid,
             (void **)&sfsProtocol);
     if (EFI_ERROR(EFI_SUCCESS) || (sfsProtocol == nullptr /* firmware misbehaving */)) {
-        ConOut->OutputString(ConOut, L"Couldn't get file system protocol for kernel path\r\n");
-        EBS->FreePages(kernelAddr, kernelPages);
+        con_write(L"Couldn't get file system protocol for kernel path\r\n");
         return EFI_LOAD_ERROR;
     }
 
     EFI_FILE_PROTOCOL *fsRoot = nullptr;
     status = sfsProtocol->OpenVolume(sfsProtocol, &fsRoot);
     if (EFI_ERROR(EFI_SUCCESS) || (fsRoot == nullptr /* firmware misbehaving */)) {
-        ConOut->OutputString(ConOut, L"Couldn't open volume (fs protocol)\r\n");
-        EBS->FreePages(kernelAddr, kernelPages);
+        con_write(L"Couldn't open volume (fs protocol)\r\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -235,52 +374,350 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     status = fsRoot->Open(fsRoot, &kernelFile, exec_path, EFI_FILE_MODE_READ, 0);
     fsRoot->Close(fsRoot);
     if (EFI_ERROR(EFI_SUCCESS) || kernelFile == nullptr) {
-        ConOut->OutputString(ConOut, L"Couldn't open kernel file\r\n");
-        EBS->FreePages(kernelAddr, kernelPages);
+        con_write(L"Couldn't open kernel file\r\n");
         return EFI_LOAD_ERROR;
     }
 
     EFI_FILE_INFO *kernelFileInfo = get_file_info(kernelFile);
     if (kernelFileInfo == nullptr) {
-        EBS->FreePages(kernelAddr, kernelPages);
         kernelFile->Close(kernelFile);
-        ConOut->OutputString(ConOut, L"Couldn't get kernel file size\r\n");
+        con_write(L"Couldn't get kernel file size\r\n");
         return EFI_LOAD_ERROR;
     }
 
-    UINTN readAmount = kernelFileInfo->FileSize;
+    UINTN kernel_file_size = kernelFileInfo->FileSize;
 
+    // Allocate space for kernel file
+    // For now we'll load at a fixed address: 0x200000 - 0x1000, the -0x1000 is for the file header.
+
+    // We'll allocate 128kb and read at most that much, for now. We'll read more if needed for
+    // program/section headers. Once we know where the file should end up (and how much space to
+    // allocate), we'll allocate space and read the rest.
+
+    EFI_PHYSICAL_ADDRESS kernelAddr = 0x200000u - 0x1000u;
+    UINTN first_chunk = std::min(UINTN(128*1024u), kernel_file_size);
+    UINTN kernelPages = (first_chunk + 0xFFFu)/0x1000u;
+    status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, kernelPages, &kernelAddr);
+    if (EFI_ERROR(EFI_SUCCESS)) {
+        con_write(L"Couldn't allocate kernel memory at 0x200000u\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    con_write(L"Allocated kernel memory at 0x200000u\r\n"); // XXX
+
+    // TODO if above allocation fails, allocate at a system-selected address instead. We will in
+    // any case relocate to the load address required by the ELF image.
+
+    UINTN readAmount = first_chunk;
     status = kernelFile->Read(kernelFile, &readAmount, (void *)kernelAddr);
-    kernelFile->Close(kernelFile);
+
     if (EFI_ERROR(status)) {
-        ConOut->OutputString(ConOut, L"Couldn't read kernel file; ");
+        kernelFile->Close(kernelFile);
+        con_write(L"Couldn't read kernel file; ");
         if (status == EFI_NO_MEDIA) {
-            ConOut->OutputString(ConOut, L"status: NO_MEDIA\r\n");
+            con_write(L"status: NO_MEDIA\r\n");
         }
         else if (status == EFI_DEVICE_ERROR) {
-            ConOut->OutputString(ConOut, L"status: DEVICE_ERROR\r\n");
+            con_write(L"status: DEVICE_ERROR\r\n");
         }
         else if (status == EFI_VOLUME_CORRUPTED) {
-            ConOut->OutputString(ConOut, L"status: VOLUME_CORRUPTED\r\n");
+            con_write(L"status: VOLUME_CORRUPTED\r\n");
         }
         else if (status == EFI_BUFFER_TOO_SMALL) {
-            ConOut->OutputString(ConOut, L"status: BUFFER_TOO_SMALL\r\n");
+            con_write(L"status: BUFFER_TOO_SMALL\r\n");
         }
         else {
-            ConOut->OutputString(ConOut, L"status not recognized, misbehaving firmware?\r\n");
+            con_write(L"status not recognized, misbehaving firmware?\r\n");
             CHAR16 errcode[3];
             errcode[2] = 0;
             errcode[1] = hexdigit(status & 0xFu);
             errcode[0] = hexdigit((status >> 4) & 0xFu);
-            ConOut->OutputString(ConOut, L"    EFI status: 0x");
-            ConOut->OutputString(ConOut, errcode);
-            ConOut->OutputString(ConOut, L"\r\n");
+            con_write(L"    EFI status: 0x");
+            con_write(errcode);
+            con_write(L"\r\n");
         }
         EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
-    else {
-        ConOut->OutputString(ConOut, L"Loaded kernel (!!)\r\n"); // XXX
+
+    Elf64_Ehdr *elf_hdr = (Elf64_Ehdr *) kernelAddr;
+
+    // check e_ident
+    if (std::char_traits<char>::compare((const char *)elf_hdr->e_ident, ELFMAGIC, 4) != 0) {
+        con_write(L"Incorrect ELF header, not a valid ELF file\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    unsigned elf_class = elf_hdr->e_ident[EI_CLASS];
+    static_assert(sizeof(void*) == 4 || sizeof(void*) == 8, "pointer size must be 4/8 bytes");
+    if ((sizeof(void*) == 4 && elf_class != ELFCLASS32) || (sizeof(void*) == 8 && elf_class != ELFCLASS64)) {
+        con_write(L"Wrong ELF class (64/32 bit)\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    unsigned elf_version = elf_hdr->e_ident[EI_VERSION];
+    if (elf_version != EV_CURRENT) {
+        con_write(L"Unsupported ELF version\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    unsigned elf_data_enc = elf_hdr->e_ident[EI_DATA];
+    if (elf_data_enc != ELFDATA2LSB /* && elf_data_enc != ELFDATA2MSB */) {
+        con_write(L"Unsupported ELF data encoding\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    // TODO actually support non-native encoding?
+
+    if (elf_hdr->e_machine != EM_X86_64) {
+        con_write(L"Wrong or unsupported ELF machine type\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    if (elf_hdr->e_phnum == PH_XNUM) {
+        con_write(L"Too many ELF program headers\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    // check program headers, make sure we have allocated  correctly
+    uintptr_t elf_ph_off = elf_hdr->e_phoff;
+    uint16_t elf_ph_ent_size = elf_hdr->e_phentsize;
+    uint16_t elf_ph_ent_num = elf_hdr->e_phnum;
+
+    // sanity check program headers
+    if (((kernel_file_size - elf_ph_off) / elf_ph_ent_size) < elf_ph_ent_num) {
+        con_write(L"Bad ELF structure\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    con_write(L"elf phoff = "); con_write(elf_hdr->e_phoff); con_write(L"\r\n"); // XXX
+    con_write(L"elf phnum = "); con_write(elf_hdr->e_phnum); con_write(L"\r\n"); // XXX
+
+    // Do we need to expand the chunk read? Typically we won't, the program headers tend to follow
+    // immediately after the ELF header
+
+    uintptr_t elf_ph_end = elf_ph_off + elf_ph_ent_size * elf_ph_ent_num;
+    if (elf_ph_end > (kernelPages * 0x1000u)) {
+        // TODO
+        con_write(L"Unsupported ELF structure\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    // Now we want to check:
+    // * the total range of memory required (lowest-highest virtual address)
+    // * whether the segments are contiguous, i.e. file-vaddr offset is the
+    //   same for all segments
+
+    bool found_loadable = false;
+    uintptr_t file_voffs;
+    uintptr_t lowest_vaddr;
+    uintptr_t highest_vaddr;
+
+    struct bss_area {
+        uintptr_t begin_offset;
+        size_t size;
+    };
+
+    // bss areas need to be cleared before entry to kernel
+    std::vector<bss_area> bss_areas;
+
+    for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
+        uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernelAddr;
+        Elf64_Phdr *phdr = (Elf64_Phdr *)ph_addr;
+        if (phdr->p_type == PT_LOAD) {
+            uintptr_t voffs = phdr->p_vaddr - phdr->p_offset;
+
+            if (phdr->p_vaddr < phdr->p_offset) {
+                // technically possible, but unsupported
+                // TODO support this
+                con_write(L"Unsupported ELF structure\r\n");
+                EBS->FreePages(kernelAddr, kernelPages);
+                kernelFile->Close(kernelFile);
+                return EFI_LOAD_ERROR;
+            }
+
+            if (!found_loadable) {
+                file_voffs = voffs;
+                lowest_vaddr = phdr->p_vaddr;
+                highest_vaddr = phdr->p_vaddr + phdr->p_memsz;
+                found_loadable = true;
+            }
+            else {
+                if (file_voffs != voffs) {
+                    // technically possible, but unsupported
+                    // TODO support this
+                    con_write(L"Unsupported ELF structure\r\n");
+                    EBS->FreePages(kernelAddr, kernelPages);
+                    kernelFile->Close(kernelFile);
+                    return EFI_LOAD_ERROR;
+                }
+                lowest_vaddr = std::min(lowest_vaddr, phdr->p_vaddr);
+                highest_vaddr = std::max(highest_vaddr, phdr->p_vaddr + phdr->p_memsz);
+            }
+
+            if (phdr->p_memsz > phdr->p_filesz) {
+                bss_areas.push_back(bss_area { phdr->p_offset + phdr->p_filesz,
+                    phdr->p_memsz - phdr->p_filesz });
+            }
+        }
+    }
+
+    if (!found_loadable) {
+        con_write(L"No loadable segments in ELF\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    con_write(L"lowest vaddr: "); con_write_hex(lowest_vaddr); con_write(L"\r\n");
+    con_write(L"highest vaddr: "); con_write_hex(highest_vaddr); con_write(L"\r\n");
+    con_write(L"file_voffs = "); con_write_hex(file_voffs); con_write(L"\r\n");
+
+    // Need to account for values in upper half
+    const uintptr_t high_half_addr = 0xFFFFFFFF80000000;
+
+    uintptr_t adj_voffs = file_voffs;
+    if (adj_voffs >= high_half_addr) adj_voffs -= high_half_addr;
+
+    // Re-locate if necessary, and load the rest of the kernel:
+
+    if (adj_voffs != kernelAddr) {
+        // TODO relocate instead of erroring out!
+        con_write(L"Unsupported load address\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        kernelFile->Close(kernelFile);
+        return EFI_LOAD_ERROR;
+    }
+
+    // Allocate memory for the rest of the kernel, including any bss
+    uintptr_t kernel_limit = std::max(kernel_file_size, highest_vaddr - file_voffs);
+    UINTN pages_required = (kernel_limit + 0xFFFu) / 0x1000u;
+    uintptr_t kernel_extra_base = kernelAddr + kernelPages * 0x1000u;
+    if (pages_required > kernelPages) {
+        UINTN additional_reqd = pages_required - kernelPages;
+
+        status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, additional_reqd, &kernel_extra_base);
+        if (EFI_ERROR(EFI_SUCCESS)) {
+            con_write(L"Couldn't allocate kernel memory\r\n");
+            EBS->FreePages(kernelAddr, kernelPages);
+            kernelFile->Close(kernelFile);
+            return EFI_LOAD_ERROR;
+        }
+
+        kernelPages += pages_required;
+    }
+
+    // Read the entire kernel image
+    readAmount = kernel_file_size - first_chunk;
+
+    if (readAmount > 0) {
+        status = kernelFile->Read(kernelFile, &readAmount, (void *)kernel_extra_base);
+        if (EFI_ERROR(status)) {
+            con_write(L"Couldn't read kernel file\r\n");
+            EBS->FreePages(kernelAddr, kernelPages);
+            kernelFile->Close(kernelFile);
+            return EFI_LOAD_ERROR;
+        }
+    }
+
+    kernelFile->Close(kernelFile);
+
+    // Find the stivale2 header (in the .stivale2hdr section).
+
+    // We need to iterate through the sections and find one with the correct name (the name is
+    // stored as an index into the section header names section, whose index is identified via
+    // an entry in the elf header).
+
+    auto num_section_hdrs = elf_hdr->e_shnum;
+    if (num_section_hdrs == 0) { // real number is in first section entry, don't support that yet
+        con_write(L"Unsupported ELF structure\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        return EFI_LOAD_ERROR;
+    }
+
+    uintptr_t section_headers_start = elf_hdr->e_shoff;
+
+    if ((kernel_file_size - section_headers_start) / elf_hdr->e_shentsize < num_section_hdrs
+            || elf_hdr->e_shstrndx >= num_section_hdrs
+            || elf_hdr->e_shstrndx == 0) {
+        con_write(L"Bad ELF structure\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        return EFI_LOAD_ERROR;
+    }
+
+    Elf64_Shdr *sh_string_section = (Elf64_Shdr *)(kernelAddr + section_headers_start
+            + (elf_hdr->e_shentsize * elf_hdr->e_shstrndx));
+    char *sh_string_start = (char *)(kernelAddr + sh_string_section->sh_offset);
+
+    stivale2_header *sv2_header = nullptr;
+
+    for (unsigned i = 0; i < num_section_hdrs; i++) {
+        Elf64_Shdr *section_hdr = (Elf64_Shdr *)(kernelAddr + section_headers_start
+                + (elf_hdr->e_shentsize * i));
+        uint16_t name_offs = section_hdr->sh_name;
+        if (name_offs >= sh_string_section->sh_size) {
+            con_write(L"Bad ELF structure\r\n");
+            EBS->FreePages(kernelAddr, kernelPages);
+            return EFI_LOAD_ERROR;
+        }
+        std::string_view section_name { sh_string_start + name_offs, sh_string_section->sh_size - name_offs };
+        auto nul_pos = section_name.find('\0');
+        if (nul_pos == std::string_view::npos) {
+            con_write(L"Bad ELF structure\r\n");
+            EBS->FreePages(kernelAddr, kernelPages);
+            return EFI_LOAD_ERROR;
+        }
+        section_name = section_name.substring(0, nul_pos);
+
+        if (section_name == ".stivale2hdr") {
+            con_write(L"found stivale2hdr section, index = "); con_write(i); con_write(L"\r\n"); // XXX
+            sv2_header = (stivale2_header *)(kernelAddr + section_hdr->sh_offset);
+        }
+    }
+
+    // TODO stivale2 spec implies that the .stivale2hdr section can contain either the stivale2 header
+    // or a stivale2 anchor pointing to the header. Check for and handle the latter case, I guess.
+
+    if (sv2_header == nullptr) {
+        con_write(L"Stivale2 header not found\r\n");
+        EBS->FreePages(kernelAddr, kernelPages);
+        return EFI_LOAD_ERROR;
+    }
+
+    // We need to extract any needed info from the stivale header before we clear .bss!
+
+    // TODO entry point and stack top need to be adjusted if kernel relocated
+    uint64_t sv2_entry_point = sv2_header->entry_point;
+    uint64_t sv2_stack_top = sv2_header->stack_top;
+    uint64_t sv2_flags = sv2_header->flags;
+
+    bool sv2_high_half_ptrs = (sv2_flags & 0x2) != 0;
+
+    typedef void (*stivale_entry_t)(stivale2_struct *);
+    stivale_entry_t stivale_entry = sv2_entry_point == 0
+            ? (stivale_entry_t) elf_hdr->e_entry : (stivale_entry_t) sv2_entry_point;
+
+    // TODO check tags - at last "any video" or "framebuffer" tags must be present
+
+    // Zero out bss (parts of segments which have no corresponding file backing)
+    for (bss_area bss : bss_areas) {
+        memset((char *)kernelAddr + bss.begin_offset, 0, bss.size);
     }
 
     // Allocate space for page tables
@@ -462,10 +899,9 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
     }
 
-    efiMemMapPtr = nullptr;
+    efiMemMapPtr.reset();
 
-    // TODO calculate kernelSize including bss / stack
-    uint64_t kernelSize = ((readAmount - 0x1000u + 0xFFFu) / 0x1000u) * 0x1000u;
+    uint64_t kernelSize = kernelPages * 0x1000u;
 
     st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernelAddr, kernelSize);
 
@@ -570,7 +1006,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     fbinfo.framebuffer_addr = graphics->Mode->FrameBufferBase;
     fbinfo.framebuffer_width = graphics->Mode->Info->HorizontalResolution;
     fbinfo.framebuffer_height = graphics->Mode->Info->VerticalResolution;
-    fbinfo.framebuffer_pitch = graphics->Mode->Info->PixelsPerScanLine * (fbinfo.framebuffer_bpp / 8u);
+    fbinfo.framebuffer_pitch = graphics->Mode->Info->PixelsPerScanLine * ((fbinfo.framebuffer_bpp + 7) / 8u);
 
     uint64_t fb_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
 
@@ -583,12 +1019,11 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     stivale2_info.tags = &st2_memmap_tag->tag;
     st2_memmap_tag->tag.next = &fbinfo.tag;
 
-    // Exit boot services
+    // TODO high-half pointers support
 
-    // (for later: SetVirtualMemoryMap to allow EFI runtime services to be used in kernel mode)
+    // TODO: exit boot services?
 
-    // Jump into kernel (incl. switch stack)
-
+    // (for later: SetVirtualMemoryMap to allow EFI runtime services to be used in kernel mode?)
 
     // Enable paging (4-level)
 
@@ -597,9 +1032,10 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // bit 8 = IA-32e mode enable  [0x100]
     // bit 11 = enable NX bit (no-execute)  [0x800]
 
-    // Cannot do the following in long mode, need to transition to 32-bit mode to disable paging,
-    // sigh. Since we currently only handle 4-level paging, we need to make sure 5-level paging
-    // isn't enabled:
+    // We can't change the paging mode once while paging is enabled, and we can't disable paging
+    // while in long mode. We'd need to transition to 32-bit mode to disable paging, sigh.
+    // We'll put that on the TODO list. For now, since we currently only handle 4-level paging,
+    // we need to make sure 5-level paging isn't enabled:
 
     uint64_t cr4flags;
 
@@ -610,11 +1046,13 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     con_write(L"cr4 flags = "); con_write(cr4flags); con_write(L"\r\n");
     if (cr4flags & 0x1000) {
-        con_write(L"Uh-oh, LA57 is enabled :(\r\n");  // TODO
+        con_write(L"Uh-oh, LA57 was enabled by firmware :(\r\n");  // TODO
         EBS->FreePages((EFI_PHYSICAL_ADDRESS)pageTables, pageTablesPages);
         EBS->FreePages(kernelAddr, kernelPages);
         return EFI_LOAD_ERROR;
     }
+
+    // Now, put our page tables in place:
 
     asm volatile (
             "cli\n"
@@ -648,17 +1086,77 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             : "eax", "ecx", "edx"
     );
 
+    // TODO: Stivale2 spec says we should disable all IRQs on the PIC and APIC.
+    // (even though that doesn't seem like any business of a bootloader...)
 
-    typedef void (*stivale_entry_t)(stivale2_struct *);
-    Elf64_Ehdr *elf_hdr = (Elf64_Ehdr *) kernelAddr;
+    // Load GDT, jump into kernel and switch stack:
 
-    stivale_entry_t stivale_entry = (stivale_entry_t) elf_hdr->e_entry;
+    // Argument to LGDT instruction will be this format:
+    struct LoadGDT64_struct {
+        uint16_t size;
+        DT_entry *base; /* linear(!) base address */
+    } __attribute__((packed));
 
-    asm volatile (
-            "callq *%0\n"
-            :
-            : "r"(stivale_entry), "D"(&stivale2_info)
-    );
+    LoadGDT64_struct gdt_desc { uint16_t(sizeof(GDT_table) - 1), GDT_table };
+
+    if (sv2_stack_top != 0) {
+        asm volatile (
+                    "lgdt %0\n"
+
+                // Note that "iretq" in long mode pops all of flags, CS:RIP and SS:RSP.
+                // What we're trying to accomplish here is basically a far jump - something that turns
+                // out to be pretty tricky in long mode. But handily, this will load SS:RSP at the
+                // same time.
+
+                    "pushq $0x30\n" // SS
+                    "pushq %1\n"    // RSP
+                    "pushfq\n"
+                    "pushq $0x28\n" // CS
+
+                    // rather than push the target directly, load it relative to RIP. This prevents issues
+                    // in the case that we are loaded above 2GB when the push'd value will be sign extended.
+                    // (Although, due to our mappings, that mightn't be a problem anyway...)
+                    // so, not this: "pushq $long_jmp_after_gdt_load\n"
+                    "leaq long_jmp_after_gdt_load(%%rip), %%rax\n"
+                    "pushq %%rax\n" // RIP
+                    "iretq\n"       // returns to following instruction:
+
+                "long_jmp_after_gdt_load:\n"
+                    "movl $0x30, %%eax\n"
+                    "movl %%eax, %%ds\n"
+                    "pushq $0x0\n"  // invalid return address
+                    "jmpq *%2"
+
+                :
+                : "m"(gdt_desc), "rm"(sv2_stack_top), "rm"(stivale_entry), "D"(&stivale2_info)
+                : "rax"
+        );
+    }
+    else {
+        // In this version, we just keep our original stack:
+        asm volatile (
+                    "lgdt %0\n"
+
+                    "movq %%rsp, %%rax\n"
+                    "pushq $0x30\n" // SS
+                    "pushq %%rax\n" // RSP (original)
+                    "pushfq\n"
+                    "pushq $0x28\n" // CS
+                    "leaq long_jmp_after_gdt_load2(%%rip), %%rax\n"
+                    "pushq %%rax\n" // RIP
+                    "iretq\n"  // returns to following instruction:
+
+                "long_jmp_after_gdt_load2:\n"
+                    "movl $0x30, %%eax\n"
+                    "movl %%eax, %%ds\n"
+                    "pushq $0x0\n"  // invalid return address
+                    "jmpq *%2"
+
+                :
+                : "m"(gdt_desc), "rm"(sv2_stack_top), "rm"(stivale_entry), "D"(&stivale2_info)
+                : "rax"
+        );
+    }
 
     return EFI_SUCCESS;
 }
