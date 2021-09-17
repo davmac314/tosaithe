@@ -8,7 +8,7 @@
 #include <cstddef>
 
 extern EFI_BOOT_SERVICES *EBS;
-extern EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut;
+extern EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *EFI_con_out;
 
 // Locate a protocol by finding a singular handle supporting it
 inline void *locate_protocol(const EFI_GUID &guid)
@@ -75,7 +75,7 @@ efi_unique_ptr<T> efi_unique_ptr_wrap(T *t)
 
 inline void con_write(const CHAR16 *str)
 {
-    ConOut->OutputString(ConOut, str);
+    EFI_con_out->OutputString(EFI_con_out, str);
 }
 
 inline void con_write(uint64_t val)

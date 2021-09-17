@@ -16,7 +16,7 @@
 
 
 EFI_BOOT_SERVICES *EBS;
-EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut;
+EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *EFI_con_out;
 
 class load_file_exception
 {
@@ -58,32 +58,32 @@ void *load_entire_file(EFI_DEVICE_PATH_PROTOCOL *dev_path, UINTN *buf_size_ptr)
         throw load_file_exception(load_file_exception::NO_FSPROTOCOL_FOR_DEV_PATH, status);
     }
 
-    EFI_FILE_PROTOCOL *fsRoot = nullptr;
-    status = sfs_protocol->OpenVolume(sfs_protocol, &fsRoot);
-    if (EFI_ERROR(status) || fsRoot == nullptr) {
+    EFI_FILE_PROTOCOL *fs_root = nullptr;
+    status = sfs_protocol->OpenVolume(sfs_protocol, &fs_root);
+    if (EFI_ERROR(status) || fs_root == nullptr) {
         throw load_file_exception(load_file_exception::CANNOT_OPEN_VOLUME, status);
     }
 
     // Need to convert remaining path to string path (within filesystem)
-    EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *dpToTextProto =
+    EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *dp2text_proto =
             (EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *)locate_protocol(EFI_device_path_to_text_protocol_guid);
 
-    if (dpToTextProto == nullptr) {
+    if (dp2text_proto == nullptr) {
         // TODO combine the path ourselves
-        fsRoot->Close(fsRoot);
+        fs_root->Close(fs_root);
         throw load_file_exception(load_file_exception::NO_DPTT_PROTOCOL);
     }
 
     EFI_FILE_PROTOCOL *file_to_load = nullptr;
 
     {
-        CHAR16 *file_path = dpToTextProto->ConvertDevicePathToText(dev_path,
+        CHAR16 *file_path = dp2text_proto->ConvertDevicePathToText(dev_path,
                 false /* displayOnly */, false /* allowShortcuts */);
 
-        status = fsRoot->Open(fsRoot, &file_to_load, file_path, EFI_FILE_MODE_READ, 0);
+        status = fs_root->Open(fs_root, &file_to_load, file_path, EFI_FILE_MODE_READ, 0);
 
         free_pool(file_path);
-        fsRoot->Close(fsRoot);
+        fs_root->Close(fs_root);
 
         if (EFI_ERROR(status) || file_to_load == nullptr) {
             throw load_file_exception(load_file_exception::CANNOT_OPEN_FILE, status);
@@ -136,37 +136,37 @@ static EFI_DEVICE_PATH_PROTOCOL *resolve_relative_path(EFI_HANDLE image_handle, 
     return full_path;
 }
 
-static EFI_STATUS chain_load(EFI_HANDLE ImageHandle, const CHAR16 *ExecPath, const CHAR16 *cmdLine)
+static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, const CHAR16 *cmdline)
 {
-    EFI_DEVICE_PATH_PROTOCOL *chainPath = resolve_relative_path(ImageHandle, ExecPath);
-    if (chainPath == nullptr) {
+    EFI_DEVICE_PATH_PROTOCOL *chain_path = resolve_relative_path(image_handle, exec_path);
+    if (chain_path == nullptr) {
         return EFI_LOAD_ERROR;
     }
 
     // Now load the image
 
-    EFI_HANDLE loadedHandle = nullptr;
-    EFI_STATUS status = EBS->LoadImage(true, ImageHandle, chainPath, nullptr, 0, &loadedHandle);
+    EFI_HANDLE loaded_handle = nullptr;
+    EFI_STATUS status = EBS->LoadImage(true, image_handle, chain_path, nullptr, 0, &loaded_handle);
 
-    free_pool(chainPath);
+    free_pool(chain_path);
 
     if (EFI_ERROR(status)) {
         con_write(L"Couldn't chain-load image: ");
-        con_write(ExecPath);
+        con_write(exec_path);
         con_write(L"\r\n");
         return EFI_LOAD_ERROR;
     }
 
     // Set load options, and run the image
 
-    EFI_LOADED_IMAGE_PROTOCOL *chainedImageLIP;
-    status = EBS->HandleProtocol(loadedHandle, &EFI_loaded_image_protocol_guid,
-            (void **)&chainedImageLIP);
+    EFI_LOADED_IMAGE_PROTOCOL *chained_image_LIP;
+    status = EBS->HandleProtocol(loaded_handle, &EFI_loaded_image_protocol_guid,
+            (void **)&chained_image_LIP);
 
-    chainedImageLIP->LoadOptions = const_cast<void *>((const void *)cmdLine);
-    chainedImageLIP->LoadOptionsSize = (strlen(cmdLine) + 1) * sizeof(CHAR16);
+    chained_image_LIP->LoadOptions = const_cast<void *>((const void *)cmdline);
+    chained_image_LIP->LoadOptionsSize = (strlen(cmdline) + 1) * sizeof(CHAR16);
 
-    status = EBS->StartImage(loadedHandle, nullptr, nullptr);
+    status = EBS->StartImage(loaded_handle, nullptr, nullptr);
 
     return status;
 }
@@ -405,9 +405,9 @@ EfiMain (
     )
 {
     EBS = SystemTable->BootServices;
-    ConOut = SystemTable->ConOut;
+    EFI_con_out = SystemTable->ConOut;
 
-    ConOut->ClearScreen(ConOut);
+    EFI_con_out->ClearScreen(EFI_con_out);
 
     con_write(L"Tosaithe boot menu\r\n");
     con_write(L"Firmware vendor: ");
@@ -466,9 +466,9 @@ EfiMain (
 
     conf_buf.reset();
 
-    ConOut->SetAttribute(ConOut, EFI_YELLOW);
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_YELLOW);
     con_write(L"Please make a selection:\r\n\r\n");
-    ConOut->SetAttribute(ConOut, EFI_LIGHTCYAN);
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTCYAN);
 
     unsigned i = 1;
     for (const auto &entry : menu) {
@@ -479,32 +479,32 @@ EfiMain (
         i++;
     }
 
-    ConOut->SetAttribute(ConOut, EFI_LIGHTGRAY);
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
     con_write(L"\r\n=>");
 
     UINTN eventIndex = 0;
     EBS->WaitForEvent(1, &SystemTable->ConIn->WaitForKey, &eventIndex);
 
-    EFI_INPUT_KEY keyPr;
-    if (EFI_ERROR(SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &keyPr))) {
+    EFI_INPUT_KEY key_pr;
+    if (EFI_ERROR(SystemTable->ConIn->ReadKeyStroke(SystemTable->ConIn, &key_pr))) {
         con_write(L"Error reading keyboard.\r\n");
         return EFI_LOAD_ERROR;
     }
 
     // Echo key
-    ConOut->SetAttribute(ConOut, EFI_WHITE);
-    CHAR16 keyStr[4];
-    keyStr[0] = keyPr.UnicodeChar;
-    keyStr[1] = L'\r'; keyStr[2] = L'\n';
-    keyStr[3] = 0;
-    con_write(keyStr);
-    ConOut->SetAttribute(ConOut, EFI_LIGHTGRAY);
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+    CHAR16 key_str[4];
+    key_str[0] = key_pr.UnicodeChar;
+    key_str[1] = L'\r'; key_str[2] = L'\n';
+    key_str[3] = 0;
+    con_write(key_str);
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
 
-    if (keyPr.UnicodeChar < L'1' || keyPr.UnicodeChar > L'9') {
+    if (key_pr.UnicodeChar < L'1' || key_pr.UnicodeChar > L'9') {
         return EFI_LOAD_ERROR; // XXX
     }
 
-    unsigned index = keyPr.UnicodeChar - L'1';
+    unsigned index = key_pr.UnicodeChar - L'1';
     if (index >= menu.size()) {
         return EFI_LOAD_ERROR; // XXX
     }
