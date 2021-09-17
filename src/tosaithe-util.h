@@ -124,7 +124,24 @@ inline CHAR16 hexdigit(int val)
     if (val < 10) {
         return L'0' + val;
     }
-    return L'A' + val;
+    return L'A' + val - 10;
+}
+
+inline void con_write_hex(uint64_t val)
+{
+    CHAR16 buf[21];
+
+    unsigned pos = 20;
+    buf[20] = 0;
+
+    do {
+        unsigned digit = val % 16;
+        val = val / 16;
+        pos--;
+        buf[pos] = hexdigit(digit);
+    } while (val > 0);
+
+    con_write(buf + pos);
 }
 
 template <typename T> void swap(T &a, T &b)
