@@ -484,6 +484,8 @@ EfiMain (
         }
     }
 
+    prompt_for_key:
+
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
     con_write(L"\r\n=>");
 
@@ -505,24 +507,25 @@ EfiMain (
     con_write(key_str);
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
 
-    if (key_pr.UnicodeChar < L'1' || key_pr.UnicodeChar > L'9') {
-        return EFI_LOAD_ERROR; // XXX
+    if (key_pr.UnicodeChar >= L'1' && key_pr.UnicodeChar <= L'9') {
+        unsigned index = key_pr.UnicodeChar - L'1';
+        if (index >= menu.size()) {
+            con_write(L"Not a valid menu entry.\r\n");
+            goto prompt_for_key;
+        }
+        const menu_entry &entry = menu[index];
+
+        if (entry.entry_type == menu_entry::CHAIN) {
+            return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+        } else if (entry.entry_type == menu_entry::LINUX_CHAIN) {
+            return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+        } else {
+            return load_stivale2(ImageHandle, L"\\badux.elf", L"");
+        }
+    }
+    else {
+        con_write(L"Not a valid menu entry.\r\n");
     }
 
-    unsigned index = key_pr.UnicodeChar - L'1';
-    if (index >= menu.size()) {
-        return EFI_LOAD_ERROR; // XXX
-    }
-    const menu_entry &entry = menu[index];
-
-    if (entry.entry_type == menu_entry::CHAIN) {
-        return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
-    } else if (entry.entry_type == menu_entry::LINUX_CHAIN) {
-        return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
-    } else {
-        return load_stivale2(ImageHandle, L"\\badux.elf", L"");
-    }
-
-    return EFI_LOAD_ERROR;
+    goto prompt_for_key;
 }
-
