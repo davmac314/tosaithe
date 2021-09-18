@@ -1167,25 +1167,28 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
                     "pushq %%rax\n" // RIP
                     "iretq\n"       // returns to following instruction:
 
+                // After this point we are on a new stack. The input operands we access must not be memory,
+                // since they could be stack-relative addresses which are no longer valid. Fortunately
+                // there's only one: the target address
+
                 "long_jmp_after_gdt_load:\n"
                     "movl $0x30, %%eax\n"
                     "movl %%eax, %%ds\n"
                     "pushq $0x0\n"  // invalid return address
-                    "jmpq *%2"
+                    "jmpq %A2"
 
                 :
-                : "m"(gdt_desc), "rm"(sv2_stack_top), "rm"(stivale_entry), "D"(&stivale2_info)
+                : "m"(gdt_desc), "rm"(sv2_stack_top), "r"(stivale_entry), "D"(&stivale2_info)
                 : "rax"
         );
     }
     else {
-        // In this version, we just keep our original stack:
+        // In this version, we set RSP to 0:
         asm volatile (
                     "lgdt %0\n"
 
-                    "movq %%rsp, %%rax\n"
                     "pushq $0x30\n" // SS
-                    "pushq %%rax\n" // RSP (original)
+                    "pushq $0x0\n"  // RSP (0x0)
                     "pushfq\n"
                     "pushq $0x28\n" // CS
                     "leaq long_jmp_after_gdt_load2(%%rip), %%rax\n"
@@ -1195,11 +1198,10 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
                 "long_jmp_after_gdt_load2:\n"
                     "movl $0x30, %%eax\n"
                     "movl %%eax, %%ds\n"
-                    "pushq $0x0\n"  // invalid return address
-                    "jmpq *%2"
+                    "jmpq %A1"
 
                 :
-                : "m"(gdt_desc), "rm"(sv2_stack_top), "rm"(stivale_entry), "D"(&stivale2_info)
+                : "m"(gdt_desc), "r"(stivale_entry), "D"(&stivale2_info)
                 : "rax"
         );
     }
