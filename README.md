@@ -4,6 +4,9 @@ Tosaithe is a minimalistic UEFI-firmware menu/bootloader. It can chain-load othe
 and loaders, including Linux kernels, and has basic support for the Stivale2 boot protocol. It is
 currently x86-64 only.
 
+For Stivale2, only ELF kernels are supported, and most optional features are not implemented
+(no terminal is provided, only 4-level page tables are supported).
+
 This is free software, with as few restrictions as legally possible. It comes with no warranty
 and will not be supported by the original author. Use it at your own risk.
 
