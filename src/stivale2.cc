@@ -19,10 +19,8 @@ class tosaithe_stivale2_memmap {
     stivale2_struct_tag_memmap *st2_memmap = nullptr;
     uint32_t capacity = 0;
 
-    bool increase_capacity()
+    bool increase_capacity() noexcept
     {
-        auto &entries = st2_memmap->entries;
-
         uint32_t newcapacity = capacity + 6; // bump capacity by arbitrary amount
         uint32_t req_size = sizeof(stivale2_struct_tag_memmap)
                 + sizeof(stivale2_mmap_entry) * newcapacity;
@@ -32,9 +30,10 @@ class tosaithe_stivale2_memmap {
         }
 
         // Copy map from old to new storage
+        auto entries = st2_memmap->entries;
         new(newmap) stivale2_struct_tag_memmap(*st2_memmap);
         for (uint32_t i = 0; i < entries; i++) {
-            new(&newmap->memmap[entries]) stivale2_mmap_entry(st2_memmap->memmap[entries]);
+            new(&newmap->memmap[i]) stivale2_mmap_entry(st2_memmap->memmap[i]);
         }
 
         free_pool(st2_memmap);
