@@ -417,8 +417,11 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // program headers. Once we've read program headers, we know where the file should end up, at
     // which point we'll allocate space and read the rest.
 
+    // Try to read in chunks of at least 128kb:
+    UINTN min_read_chunk = 128*1024u;
+
     efi_page_alloc kernel_alloc;
-    UINTN first_chunk = std::min(UINTN(128*1024u), kernel_file_size);
+    UINTN first_chunk = std::min(min_read_chunk, kernel_file_size);
 
     {
         EFI_PHYSICAL_ADDRESS kernel_addr = 0x200000u - 0x1000u;
@@ -517,21 +520,41 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     uint16_t elf_ph_ent_num = elf_hdr->e_phnum;
 
     // sanity check program headers
-    if (((kernel_file_size - elf_ph_off) / elf_ph_ent_size) < elf_ph_ent_num) {
+    if (elf_ph_off >= kernel_file_size
+            || ((kernel_file_size - elf_ph_off) / elf_ph_ent_size) < elf_ph_ent_num) {
         con_write(L"Bad ELF structure\r\n");
         kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
-    // Do we need to expand the chunk read? Typically we won't, the program headers tend to follow
-    // immediately after the ELF header
+    // Do we need to expand the chunk read? (Typically we won't, the program headers tend to follow
+    // immediately after the ELF header. But, we'll allow for the other case).
+
+    uintptr_t kernel_current_limit = kernel_alloc.get() + first_chunk;
 
     uintptr_t elf_ph_end = elf_ph_off + elf_ph_ent_size * elf_ph_ent_num;
-    if (elf_ph_end > (kernel_alloc.page_count() * 0x1000u)) {
-        // TODO
-        con_write(L"Unsupported ELF structure\r\n");
-        kernel_file->Close(kernel_file);
-        return EFI_LOAD_ERROR;
+    if (elf_ph_end > first_chunk) {
+        read_amount = std::max(elf_ph_end - first_chunk, min_read_chunk);
+        read_amount = std::min(read_amount, kernel_file_size - first_chunk);
+
+        // Extend allocation. We can assume current kernel limit is on a page boundary.
+        UINTN alloc_pages = (read_amount + 0xFFFu) / 0x1000u;
+        status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, alloc_pages, &kernel_current_limit);
+        if (EFI_ERROR(status)) {
+            con_write(L"Couldn't allocate kernel memory\r\n");
+            return EFI_LOAD_ERROR;
+        }
+
+        kernel_alloc.rezone(kernel_alloc.get(), kernel_alloc.page_count() + alloc_pages);
+
+        status = kernel_file->Read(kernel_file, &read_amount, (void *)(kernel_alloc.get() + first_chunk));
+        if (EFI_ERROR(status)) {
+            con_write(L"Couldn't read kernel file\r\n");
+            return EFI_LOAD_ERROR;
+        }
+
+        kernel_current_limit += read_amount;
+        first_chunk += read_amount;
     }
 
     // Now we want to check:
@@ -574,7 +597,8 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             }
             else {
                 if (file_voffs != voffs) {
-                    // technically possible, but unsupported
+                    // This segment has a different file/address offset than the previous one(s).
+                    // Technically possible, but unsupported.
                     // TODO support this
                     con_write(L"Unsupported ELF structure\r\n");
                     kernel_file->Close(kernel_file);
@@ -603,18 +627,15 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     uintptr_t adj_voffs = file_voffs;
     if (adj_voffs >= high_half_addr) adj_voffs -= high_half_addr;
 
-    // From this point, kernel_addr is the address of the kernel - not necessarily page-aligned
+    // From this point, kernel_addr is the address of the kernel. Currently page-aligned, though that
+    // may soon change.
     EFI_PHYSICAL_ADDRESS kernel_addr = kernel_alloc.get();
-
-    uintptr_t kernel_current_limit;
 
     {
         UINTN kernel_pages = kernel_alloc.page_count();
 
-        // The address of kernel so far loaded (+1)
-        kernel_current_limit = kernel_addr + kernel_pages * 0x1000u;
         // The limit of the current allocation for kernel (+1)
-        uintptr_t kernel_alloc_limit = kernel_current_limit;
+        uintptr_t kernel_alloc_limit = (kernel_current_limit + 0xFFFu) / 0x1000u;
         // The page address of the kernel allocation
         uintptr_t kernel_page_addr = kernel_addr;
 
@@ -665,12 +686,12 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             kernel_current_limit = new_kernel_limit;
             kernel_alloc_limit = new_alloc_limit;
             kernel_page_addr = new_kernel_page_addr;
-            kernel_pages = new_alloc_limit - new_kernel_page_addr;
+            kernel_pages = (new_alloc_limit - new_kernel_page_addr) / 0x1000u;
 
             kernel_addr = adj_voffs;
             elf_hdr = (Elf64_Ehdr *)kernel_addr;
 
-            kernel_alloc.rezone(kernel_addr, kernel_pages);
+            kernel_alloc.rezone(kernel_page_addr, kernel_pages);
         }
 
         // Allocate memory for the rest of the kernel, including any bss
@@ -773,7 +794,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     stivale_entry_t stivale_entry = sv2_entry_point == 0
             ? (stivale_entry_t) elf_hdr->e_entry : (stivale_entry_t) sv2_entry_point;
 
-    // TODO check tags - at last "any video" or "framebuffer" tags must be present
+    // TODO check tags - at least "any video" or "framebuffer" tags must be present
 
     // Zero out bss (parts of segments which have no corresponding file backing)
     for (bss_area bss : bss_areas) {
