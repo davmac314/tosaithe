@@ -401,6 +401,101 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
     return true;
 }
 
+static void check_framebuffer(stivale2_struct_tag_framebuffer *fbinfo, uint64_t *fb_size)
+{
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
+            (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locate_protocol(EFI_graphics_output_protocol_guid);;
+
+    if (graphics == nullptr) {
+        return;
+    }
+
+    switch(graphics->Mode->Info->PixelFormat) {
+    case PixelRedGreenBlueReserved8BitPerColor:
+        fbinfo->blue_mask_shift = 16;
+        fbinfo->blue_mask_size = 8;
+        fbinfo->green_mask_shift = 8;
+        fbinfo->green_mask_size = 8;
+        fbinfo->red_mask_shift = 0;
+        fbinfo->red_mask_size = 8;
+        fbinfo->framebuffer_bpp = 32;
+        break;
+    case PixelBlueGreenRedReserved8BitPerColor:
+        fbinfo->blue_mask_shift = 0;
+        fbinfo->blue_mask_size = 8;
+        fbinfo->green_mask_shift = 8;
+        fbinfo->green_mask_size = 8;
+        fbinfo->red_mask_shift = 16;
+        fbinfo->red_mask_size = 8;
+        fbinfo->framebuffer_bpp = 32;
+        break;
+    case PixelBitMask:
+    {
+        auto count_shift = [](uint32_t mask) {
+            uint8_t shift = 0;
+            while ((mask & 1) != 1) {
+                shift++;
+                mask >>= 1;
+            }
+            return shift;
+        };
+
+        auto count_size = [](uint32_t mask, uint8_t shift) {
+            uint8_t size = 0;
+            mask >>= shift;
+            while ((mask & 1) == 1) {
+                size++;
+                mask >>= 1;
+            }
+            return size;
+        };
+
+        fbinfo->red_mask_shift = count_shift(graphics->Mode->Info->PixelInformation.RedMask);
+        fbinfo->red_mask_size = count_size(graphics->Mode->Info->PixelInformation.RedMask, fbinfo->red_mask_shift);
+        fbinfo->green_mask_shift = count_shift(graphics->Mode->Info->PixelInformation.GreenMask);
+        fbinfo->green_mask_size = count_size(graphics->Mode->Info->PixelInformation.GreenMask, fbinfo->green_mask_shift);
+        fbinfo->blue_mask_shift = count_shift(graphics->Mode->Info->PixelInformation.BlueMask);
+        fbinfo->blue_mask_size = count_size(graphics->Mode->Info->PixelInformation.BlueMask, fbinfo->blue_mask_shift);
+
+        auto highest_bit = [](uint32_t mask) {
+            if (mask == 0) return uint32_t(0);
+            uint32_t bitnum = 31;
+            uint32_t bit = uint32_t(1) << 31;
+            while ((mask & bit) == 0) {
+                bit >>= 1;
+                bitnum--;
+            }
+            return bitnum;
+        };
+
+        auto max = [](uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+            uint32_t m = a;
+            if (b > m) m = b;
+            if (c > m) m = c;
+            if (d > m) m = d;
+            return d;
+        };
+
+        fbinfo->framebuffer_bpp = max(highest_bit(graphics->Mode->Info->PixelInformation.RedMask),
+                highest_bit(graphics->Mode->Info->PixelInformation.GreenMask),
+                highest_bit(graphics->Mode->Info->PixelInformation.BlueMask),
+                highest_bit(graphics->Mode->Info->PixelInformation.ReservedMask));
+
+        break;
+    }
+    default:
+        return; // without setting *fb_size, i.e. framebuffer not available
+    }
+
+    fbinfo->memory_model = 1;
+    fbinfo->framebuffer_addr = graphics->Mode->FrameBufferBase;
+    fbinfo->framebuffer_width = graphics->Mode->Info->HorizontalResolution;
+    fbinfo->framebuffer_height = graphics->Mode->Info->VerticalResolution;
+    fbinfo->framebuffer_pitch = graphics->Mode->Info->PixelsPerScanLine
+            * ((fbinfo->framebuffer_bpp + 7) / 8u);
+
+    *fb_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
+}
 
 EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine)
 {
@@ -862,103 +957,11 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // Framebuffer setup
 
     stivale2_struct_tag_framebuffer fbinfo;
+    uint64_t fb_size;
     fbinfo.tag.identifier = STIVALE2_LT_FRAMEBUFFER_IDENT;
     fbinfo.tag.next = nullptr;
 
-    EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
-            (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locate_protocol(EFI_graphics_output_protocol_guid);;
-    if (graphics == nullptr) {
-        con_write(L"No graphics protocol available.\r\n");
-        // TODO so what, just don't pass one to kernel
-        return EFI_LOAD_ERROR;
-    }
-
-    switch(graphics->Mode->Info->PixelFormat) {
-    case PixelRedGreenBlueReserved8BitPerColor:
-        fbinfo.blue_mask_shift = 16;
-        fbinfo.blue_mask_size = 8;
-        fbinfo.green_mask_shift = 8;
-        fbinfo.green_mask_size = 8;
-        fbinfo.red_mask_shift = 0;
-        fbinfo.red_mask_size = 8;
-        fbinfo.framebuffer_bpp = 32;
-        break;
-    case PixelBlueGreenRedReserved8BitPerColor:
-        fbinfo.blue_mask_shift = 0;
-        fbinfo.blue_mask_size = 8;
-        fbinfo.green_mask_shift = 8;
-        fbinfo.green_mask_size = 8;
-        fbinfo.red_mask_shift = 16;
-        fbinfo.red_mask_size = 8;
-        fbinfo.framebuffer_bpp = 32;
-        break;
-    case PixelBitMask:
-    {
-        auto count_shift = [](uint32_t mask) {
-            uint8_t shift = 0;
-            while ((mask & 1) != 1) {
-                shift++;
-                mask >>= 1;
-            }
-            return shift;
-        };
-
-        auto count_size = [](uint32_t mask, uint8_t shift) {
-            uint8_t size = 0;
-            mask >>= shift;
-            while ((mask & 1) == 1) {
-                size++;
-                mask >>= 1;
-            }
-            return size;
-        };
-
-        fbinfo.red_mask_shift = count_shift(graphics->Mode->Info->PixelInformation.RedMask);
-        fbinfo.red_mask_size = count_size(graphics->Mode->Info->PixelInformation.RedMask, fbinfo.red_mask_shift);
-        fbinfo.green_mask_shift = count_shift(graphics->Mode->Info->PixelInformation.GreenMask);
-        fbinfo.green_mask_size = count_size(graphics->Mode->Info->PixelInformation.GreenMask, fbinfo.green_mask_shift);
-        fbinfo.blue_mask_shift = count_shift(graphics->Mode->Info->PixelInformation.BlueMask);
-        fbinfo.blue_mask_size = count_size(graphics->Mode->Info->PixelInformation.BlueMask, fbinfo.blue_mask_shift);
-
-        auto highest_bit = [](uint32_t mask) {
-            if (mask == 0) return uint32_t(0);
-            uint32_t bitnum = 31;
-            uint32_t bit = uint32_t(1) << 31;
-            while ((mask & bit) == 0) {
-                bit >>= 1;
-                bitnum--;
-            }
-            return bitnum;
-        };
-
-        auto max = [](uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
-            uint32_t m = a;
-            if (b > m) m = b;
-            if (c > m) m = c;
-            if (d > m) m = d;
-            return d;
-        };
-
-        fbinfo.framebuffer_bpp = max(highest_bit(graphics->Mode->Info->PixelInformation.RedMask),
-                highest_bit(graphics->Mode->Info->PixelInformation.GreenMask),
-                highest_bit(graphics->Mode->Info->PixelInformation.BlueMask),
-                highest_bit(graphics->Mode->Info->PixelInformation.ReservedMask));
-
-        break;
-    }
-    default:
-        con_write(L"Graphics mode is not supported.\r\n");
-        // TODO don't fail, just don't pass framebuffer to kernel...
-        return EFI_LOAD_ERROR;
-    }
-
-    fbinfo.memory_model = 1;
-    fbinfo.framebuffer_addr = graphics->Mode->FrameBufferBase;
-    fbinfo.framebuffer_width = graphics->Mode->Info->HorizontalResolution;
-    fbinfo.framebuffer_height = graphics->Mode->Info->VerticalResolution;
-    fbinfo.framebuffer_pitch = graphics->Mode->Info->PixelsPerScanLine * ((fbinfo.framebuffer_bpp + 7) / 8u);
-
-    uint64_t fb_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
+    check_framebuffer(&fbinfo, &fb_size);
 
     // Build Stivale2 memory map from EFI memory map
 
@@ -1083,14 +1086,19 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     uint64_t kernel_size = kernel_alloc.page_count() * 0x1000u;
     st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get(), kernel_size);
 
-    st2_memmap.insert_entry(stivale2_mmap_type::FRAMEBUFFER, fbinfo.framebuffer_addr, fb_size);
+    if (fb_size != 0) {
+        st2_memmap.insert_entry(stivale2_mmap_type::FRAMEBUFFER, fbinfo.framebuffer_addr, fb_size);
+    }
+
     st2_memmap.sort();
 
     // Set up tag chain: memmap, framebuffer
 
     stivale2_struct_tag_memmap *st2_memmap_tag = st2_memmap.get();
     stivale2_info.tags = &st2_memmap_tag->tag;
-    st2_memmap_tag->tag.next = &fbinfo.tag;
+    if (fb_size != 0) {
+        st2_memmap_tag->tag.next = &fbinfo.tag;
+    }
 
     // TODO high-half pointers support
 
