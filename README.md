@@ -4,9 +4,6 @@ Tosaithe is a minimalistic UEFI-firmware menu/bootloader. It can chain-load othe
 and loaders, including Linux kernels, and has basic support for the Stivale2 boot protocol. It is
 currently x86-64 only.
 
-For Stivale2, only ELF kernels are supported, and most optional features are not implemented
-(no terminal is provided, only 4-level page tables are supported).
-
 This is free software, with as few restrictions as legally possible. It comes with no warranty
 and will not be supported by the original author. Use it at your own risk.
 
@@ -25,6 +22,25 @@ Tosaithe mainly serves now as:
 
 It also serves as an example client of the bmcxxabi, bmunwind, and libbmcxx libraries which
 together provide a C++ runtime and standard library.
+
+## Limitations of Stivale2 implementation
+
+For Stivale2, only 64-bit ELF kernels are supported, and most optional features are not implemented
+(no terminal is provided, no PMRs, only 4-level page tables are supported). High-half kernels are
+supported but pointers in the information tags given to the kernel will not be adjusted to the high
+half. 
+
+Position independence is not supported (the kernel will be loaded at its nominal address).
+
+The ELF segments must be contiguous and their virtual address must not be less than their file
+offset. (Both requirements are met by most common ELF files, and it would take a fairly funky
+linker script or linker to produce an ELF file that Tosaithe won't handle).
+
+The Stivale2 requirement that PIC and APIC IRQs are disabled is not currently implemented. The
+kernel should ensure IRQs are masked itself before enabling interrupts.
+
+No text mode is available in UEFI. The kernel will be booted regardless of whether it supports
+support from framebuffer. A framebuffer tag will be provided to the kernel if possible.
 
 ## Building Tosaithe
 
