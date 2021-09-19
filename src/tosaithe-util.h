@@ -73,6 +73,73 @@ efi_unique_ptr<T> efi_unique_ptr_wrap(T *t)
     return efi_unique_ptr<T>(t);
 }
 
+class efi_page_deleter
+{
+public:
+    using pointer = EFI_PHYSICAL_ADDRESS;
+    UINTN num_pages = 0;
+
+    void operator()(pointer v)
+    {
+        EBS->FreePages(v, num_pages);
+    }
+};
+
+// Owned page allocation
+class efi_page_alloc : public std::unique_ptr<void, efi_page_deleter>
+{
+public:
+    efi_page_alloc() noexcept {}
+
+    // allocate pages at the specified (page-aligned) address
+    void allocate(EFI_PHYSICAL_ADDRESS address, UINTN num_pages)
+    {
+        if (!allocate_nx(address, num_pages)) {
+            throw std::bad_alloc();
+        }
+    }
+
+    // allocate pages at the specified address, non-throwing (return true if successful)
+    bool allocate_nx(EFI_PHYSICAL_ADDRESS address, UINTN num_pages) noexcept
+    {
+        EFI_STATUS status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, num_pages, &address);
+        if (EFI_ERROR(status)) {
+            return false;
+        }
+
+        reset(address);
+        get_deleter().num_pages = num_pages;
+        return true;
+    }
+
+    // allocate pages at any address
+    void allocate(UINTN num_pages) { if (!allocate_nx(num_pages)) throw std::bad_alloc(); }
+
+    // allocate pages at any address, non-throwing (return true if successful)
+    bool allocate_nx(UINTN num_pages) noexcept
+    {
+        EFI_PHYSICAL_ADDRESS address;
+        EFI_STATUS status = EBS->AllocatePages(AllocateAnyPages, EfiLoaderCode, num_pages, &address);
+        if (EFI_ERROR(status)) {
+            return false;
+        }
+
+        reset(address);
+        get_deleter().num_pages = num_pages;
+        return true;
+    }
+
+    // change the underlying allocated area, without performing any allocation/free
+    void rezone(EFI_PHYSICAL_ADDRESS address, UINTN num_pages) noexcept
+    {
+        release();
+        reset(address);
+        get_deleter().num_pages = num_pages;
+    }
+
+    UINTN page_count() const noexcept { return get_deleter().num_pages; }
+};
+
 inline void con_write(const CHAR16 *str)
 {
     EFI_con_out->OutputString(EFI_con_out, str);
