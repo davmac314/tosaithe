@@ -411,11 +411,10 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     }
 
     // Allocate space for kernel file
-    // For now we'll load at a fixed address: 0x200000 - 0x1000, the -0x1000 is for the file header.
-
-    // We'll allocate 128kb and read at most that much, for now. We'll read more if needed for
-    // program headers. Once we've read program headers, we know where the file should end up, at
-    // which point we'll allocate space and read the rest.
+    // For now we'll load a portion at an arbitrary address. We'll allocate 128kb and read at most
+    // that much, for now. We'll read more if needed for program headers. Once we've read program
+    // headers, we know where the file should end up, at which point we'll allocate space, relocate
+    // what we've already read, and read the rest.
 
     // Try to read in chunks of at least 128kb:
     UINTN min_read_chunk = 128*1024u;
@@ -424,19 +423,13 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     UINTN first_chunk = std::min(min_read_chunk, kernel_file_size);
 
     {
-        EFI_PHYSICAL_ADDRESS kernel_addr = 0x200000u - 0x1000u;
         UINTN kernel_pages = (first_chunk + 0xFFFu)/0x1000u;
 
-        if (!kernel_alloc.allocate_nx(kernel_addr, kernel_pages)) {
-            con_write(L"Couldn't allocate kernel memory at 0x200000u\r\n");
+        if (!kernel_alloc.allocate_nx(kernel_pages)) {
+            con_write(L"Couldn't allocate kernel memory\r\n");
             return EFI_LOAD_ERROR;
         }
     }
-
-    con_write(L"Allocated kernel memory at 0x200000u\r\n"); // XXX
-
-    // TODO if above allocation fails, allocate at a system-selected address instead. We will in
-    // any case relocate to the load address required by the ELF image.
 
     UINTN read_amount = first_chunk;
     EFI_STATUS status = kernel_file->Read(kernel_file, &read_amount, (void *)kernel_alloc.get());
