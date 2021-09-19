@@ -61,9 +61,9 @@ public:
         return true;
     }
 
-    bool add_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length)
+    bool add_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length) noexcept
     {
-        auto &entries = st2_memmap->entries;
+        auto entries = st2_memmap->entries;
 
         if (st2_memmap->entries == capacity) {
             if (!increase_capacity()) {
@@ -76,7 +76,7 @@ public:
         st2_memmap->memmap[entries].base = physaddr;
         st2_memmap->memmap[entries].length = length;
         st2_memmap->memmap[entries].unused = 0;
-        entries++;
+        st2_memmap->entries++;
 
         return true;
     }
