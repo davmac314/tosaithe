@@ -13,25 +13,26 @@
 #include "tosaithe-util.h"
 
 extern EFI_BOOT_SERVICES *EBS;
+extern EFI_SYSTEM_TABLE *EST;
 
 // Class to manage building a Stivale2 memory map structure
 class tosaithe_stivale2_memmap {
-    stivale2_struct_tag_memmap *st2_memmap = nullptr;
+    stivale2_memmap_info *st2_memmap = nullptr;
     uint32_t capacity = 0;
 
     bool increase_capacity() noexcept
     {
         uint32_t newcapacity = capacity + 6; // bump capacity by arbitrary amount
-        uint32_t req_size = sizeof(stivale2_struct_tag_memmap)
+        uint32_t req_size = sizeof(stivale2_memmap_info)
                 + sizeof(stivale2_mmap_entry) * newcapacity;
-        stivale2_struct_tag_memmap *newmap = (stivale2_struct_tag_memmap *) alloc_pool(req_size);
+        stivale2_memmap_info *newmap = (stivale2_memmap_info *) alloc_pool(req_size);
         if (newmap == nullptr) {
             return false;
         }
 
         // Copy map from old to new storage
         auto entries = st2_memmap->entries;
-        new(newmap) stivale2_struct_tag_memmap(*st2_memmap);
+        new(newmap) stivale2_memmap_info(*st2_memmap);
         for (uint32_t i = 0; i < entries; i++) {
             new(&newmap->memmap[i]) stivale2_mmap_entry(st2_memmap->memmap[i]);
         }
@@ -46,14 +47,14 @@ class tosaithe_stivale2_memmap {
 public:
     bool allocate(uint32_t capacity_p) noexcept
     {
-        uint32_t req_size = sizeof(stivale2_struct_tag_memmap)
+        uint32_t req_size = sizeof(stivale2_memmap_info)
                 + sizeof(stivale2_mmap_entry) * capacity_p;
-        st2_memmap = (stivale2_struct_tag_memmap *) alloc_pool(req_size);
+        st2_memmap = (stivale2_memmap_info *) alloc_pool(req_size);
         if (st2_memmap == nullptr) {
             return false;
         }
-        new(st2_memmap) stivale2_struct_tag_memmap();
-        st2_memmap->tag.identifier = STIVALE2_LT_MMAP_IDENT;
+        new(st2_memmap) stivale2_memmap_info();
+        st2_memmap->tag.identifier = STIVALE2_LT_MMAP_TAGID;
         st2_memmap->tag.next = nullptr;
         st2_memmap->entries = 0;
         capacity = capacity_p;
@@ -158,7 +159,7 @@ public:
         st2_memmap->entries = 0;
     }
 
-    stivale2_struct_tag_memmap *get()
+    stivale2_memmap_info *get()
     {
         return st2_memmap;
     }
@@ -401,7 +402,7 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
     return true;
 }
 
-static void check_framebuffer(stivale2_struct_tag_framebuffer *fbinfo, uint64_t *fb_size)
+static void check_framebuffer(stivale2_framebuffer_info *fbinfo, uint64_t *fb_size)
 {
     EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
             (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locate_protocol(EFI_graphics_output_protocol_guid);;
@@ -956,9 +957,9 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     // Framebuffer setup
 
-    stivale2_struct_tag_framebuffer fbinfo;
+    stivale2_framebuffer_info fbinfo;
     uint64_t fb_size;
-    fbinfo.tag.identifier = STIVALE2_LT_FRAMEBUFFER_IDENT;
+    fbinfo.tag.identifier = STIVALE2_LT_FRAMEBUFFER_TAGID;
     fbinfo.tag.next = nullptr;
 
     check_framebuffer(&fbinfo, &fb_size);
@@ -1092,13 +1093,23 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     st2_memmap.sort();
 
-    // Set up tag chain: memmap, framebuffer
+    // Set up tag chain: memmap, efi system table, framebuffer
 
-    stivale2_struct_tag_memmap *st2_memmap_tag = st2_memmap.get();
+    stivale2_memmap_info *st2_memmap_tag = st2_memmap.get();
     stivale2_info.tags = &st2_memmap_tag->tag;
+
+    stivale2_efi_system_table_info st2_efi_sys_tbl_tag;
+    st2_efi_sys_tbl_tag.tag.identifier = STIVALE2_LT_EFI_SYSTEM_TBL_TAGID;
+    st2_efi_sys_tbl_tag.tag.next = nullptr;
+    st2_efi_sys_tbl_tag.system_table = EST;
+    st2_memmap_tag->tag.next = &st2_efi_sys_tbl_tag.tag;
+
     if (fb_size != 0) {
-        st2_memmap_tag->tag.next = &fbinfo.tag;
+        st2_efi_sys_tbl_tag.tag.next = &fbinfo.tag;
     }
+
+    // TODO command line tag
+    // TODO modules tag
 
     // TODO high-half pointers support
 
@@ -1178,7 +1189,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     );
 
     // TODO: Stivale2 spec says we should disable all IRQs on the PIC and APIC.
-    // (even though that doesn't seem like any business of a bootloader...)
 
     // Load GDT, jump into kernel and switch stack:
 

@@ -16,6 +16,7 @@
 
 
 EFI_BOOT_SERVICES *EBS;
+EFI_SYSTEM_TABLE *EST;
 EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *EFI_con_out;
 
 class load_file_exception
@@ -404,6 +405,7 @@ EfiMain (
     IN EFI_SYSTEM_TABLE  *SystemTable
     )
 {
+    EST = SystemTable;
     EBS = SystemTable->BootServices;
     EFI_con_out = SystemTable->ConOut;
 

@@ -1,29 +1,34 @@
 #ifndef INCLUDED_STIVALE2_H
 #define INCLUDED_STIVALE2_H 1
 
+// Stivale2 definitions. Note this is not the "official" Stivale2 header. Some modifications have
+// been made.
+
 #include <stdint.h>
 
+static_assert(sizeof(void *) == 8, "this code needs adjusting for 32-bit environment");
 template <typename T> using ptr64 = T *;
 template <typename T> using funcptr64 = T;
 
 
 // Header tags, i.e. request from OS to bootloader:
-constexpr uint64_t STIVALE2_HT_FRAMEBUFFER_IDENT = 0x3ecc1bc43d0f7971;
-constexpr uint64_t STIVALE2_HT_TERMINAL_IDENT = 0xa85d499b1823be72U;
+constexpr uint64_t STIVALE2_HT_FRAMEBUFFER_TAGID = 0x3ecc1bc43d0f7971;
+constexpr uint64_t STIVALE2_HT_TERMINAL_TAGID = 0xa85d499b1823be72U;
 
 // Loader tags, i.e info/feature from bootloader to OS:
-constexpr uint64_t STIVALE2_LT_MMAP_IDENT = 0x2187f79e8612de07;
-constexpr uint64_t STIVALE2_LT_CMDLINE_IDENT = 0xe5e76a1b4597a781;
-constexpr uint64_t STIVALE2_LT_FRAMEBUFFER_IDENT = 0x506461d2950408fa;
-constexpr uint64_t STIVALE2_LT_TERMINAL_IDENT = 0xc2b3f4c3233b0974;
+constexpr uint64_t STIVALE2_LT_MMAP_TAGID = 0x2187f79e8612de07;
+constexpr uint64_t STIVALE2_LT_CMDLINE_TAGID = 0xe5e76a1b4597a781;
+constexpr uint64_t STIVALE2_LT_FRAMEBUFFER_TAGID = 0x506461d2950408fa;
+constexpr uint64_t STIVALE2_LT_TERMINAL_TAGID = 0xc2b3f4c3233b0974;
+constexpr uint64_t STIVALE2_LT_EFI_SYSTEM_TBL_TAGID = 0x4bc5ec15845b558e;
 
-
+// General tag structure. This is embedded inside head tag / info structs.
 struct stivale2_tag {
     uint64_t identifier;
     ptr64<stivale2_tag> next;
 };
 
-
+// Stivale2 header, as found in ".stivale2hdr" section
 struct stivale2_header {
     uint64_t entry_point;
     uint64_t stack_top;
@@ -69,7 +74,7 @@ struct stivale2_mmap_entry {
     uint32_t unused;
 };
 
-struct stivale2_struct_tag_memmap {
+struct stivale2_memmap_info {
     stivale2_tag tag;  // STIVALE2_ST_MMAP_IDENT
     uint64_t entries;
     stivale2_mmap_entry memmap[];
@@ -80,7 +85,7 @@ struct stivale2_cmdline_info {
     ptr64<char> cmdline;
 };
 
-struct stivale2_struct_tag_framebuffer {
+struct stivale2_framebuffer_info {
     stivale2_tag tag;             // STIVALE2_ST_FRAMEBUFFER_IDENT
     uint64_t framebuffer_addr;    // physical address of the framebuffer
     uint16_t framebuffer_width;   // width in pixels
@@ -108,5 +113,9 @@ struct stivale2_terminal_info {
     funcptr64<stivale2_term_write_func_t> term_write;    // stivale2_term_write() function
 };
 
+struct stivale2_efi_system_table_info {
+    stivale2_tag tag;           // STIVALE2_EFI_SYSTEM_TBL_INFO_TAG_ID
+    ptr64<void> system_table;   // pointer to EFI system table
+};
 
 #endif
