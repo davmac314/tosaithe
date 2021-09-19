@@ -44,7 +44,7 @@ class tosaithe_stivale2_memmap {
     }
 
 public:
-    bool allocate(uint32_t capacity_p)
+    bool allocate(uint32_t capacity_p) noexcept
     {
         uint32_t req_size = sizeof(stivale2_struct_tag_memmap)
                 + sizeof(stivale2_mmap_entry) * capacity_p;
@@ -83,7 +83,7 @@ public:
     // Insert an entry, which should be making use of available space only.
     // On failure, returns false; in that case integrity of the map is no longer guaranteed.
     // On success returns true: beware, map may require sorting
-    bool insert_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length)
+    bool insert_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length) noexcept
     {
         auto &entries = st2_memmap->entries;
 
@@ -132,7 +132,7 @@ public:
         return true;
     }
 
-    void sort()
+    void sort() noexcept
     {
         // Ok, so this is bubble sort. But the map shouldn't be too big and will likely be nearly
         // sorted already, so this is a good fit.
@@ -149,6 +149,13 @@ public:
             }
             end_i = last_i;
         }
+    }
+
+    // Clear all memory map entries, *without* reducing capacity. This is for when we need to
+    // rebuild the map from scratch, but don't want to have to perform additional allocations.
+    void clear() noexcept
+    {
+        st2_memmap->entries = 0;
     }
 
     stivale2_struct_tag_memmap *get()
@@ -838,112 +845,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // Set up Stivale2 tags
     stivale2_struct stivale2_info = { "tosaithe", "0.1", nullptr };
 
-    // Build Stivale2 memory map from EFI memory map
-
-    UINTN memMapSize = 0;
-    UINTN memMapKey = 0;
-    UINTN memMapDescrSize = 0;
-    uint32_t memMapDescrVersion = 0;
-    status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-    if (status != EFI_BUFFER_TOO_SMALL) {
-        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
-        return EFI_LOAD_ERROR;
-    }
-
-    efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efiMemMapPtr;
-
-    {
-        EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
-        if (efiMemMap == nullptr) {
-            con_write(L"*** Memory allocation failed ***\r\n");
-            return EFI_LOAD_ERROR;
-        }
-
-        status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-        while (status == EFI_BUFFER_TOO_SMALL) {
-            // Above allocation may have increased size of memory map, so we keep trying
-            free_pool(efiMemMap);
-            efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
-            if (efiMemMap == nullptr) {
-                con_write(L"*** Memory allocation failed ***\r\n");
-                return EFI_LOAD_ERROR;
-            }
-            status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-        }
-
-        efiMemMapPtr.reset(efiMemMap);
-    }
-
-    if (EFI_ERROR(status)) {
-        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
-        return EFI_LOAD_ERROR;
-    }
-
-    // Allocate Stivale2 memmap
-    tosaithe_stivale2_memmap st2_memmap;
-    if (!st2_memmap.allocate(memMapSize / memMapDescrSize + 6)) { // +6 for wiggle room
-        con_write(L"*** Memory allocation failed ***\r\n");
-        return EFI_LOAD_ERROR;
-    }
-
-    // Copy entries from EFI memory map to Stivale2 map
-    auto *efi_mem_iter = efiMemMapPtr.get();
-    auto *efi_mem_end = (EFI_MEMORY_DESCRIPTOR *)((char *)efiMemMapPtr.get() + memMapSize);
-    while (efi_mem_iter < efi_mem_end) {
-
-        stivale2_mmap_type st_type;
-
-        switch (efi_mem_iter->Type) {
-        case EfiReservedMemoryType:
-            st_type = stivale2_mmap_type::RESERVED;
-            break;
-        case EfiLoaderCode:
-        case EfiLoaderData:
-        case EfiBootServicesCode:
-        case EfiBootServicesData:
-            st_type = stivale2_mmap_type::BOOTLOADER_RECLAIMABLE;
-            break;
-        case EfiRuntimeServicesCode:
-        case EfiRuntimeServicesData:
-            // Stivale2 has no suitable memory type to indicate EFI runtime services use.
-            // If we specify it as USABLE or RECLAIMABLE, runtime services won't be usable.
-            st_type = stivale2_mmap_type::RESERVED;
-            break;
-        case EfiConventionalMemory:
-            st_type = stivale2_mmap_type::USABLE;
-            break;
-        case EfiUnusableMemory:
-            st_type = stivale2_mmap_type::BAD_MEMORY;
-            break;
-        case EfiACPIReclaimMemory:
-            st_type = stivale2_mmap_type::ACPI_RECLAIMABLE;
-            break;
-        case EfiACPIMemoryNVS:
-            st_type = stivale2_mmap_type::ACPI_NVS;
-            break;
-        case EfiMemoryMappedIO:
-        case EfiMemoryMappedIOPortSpace:
-        case EfiPalCode:
-            st_type = stivale2_mmap_type::RESERVED;
-            break;
-        case EfiPersistentMemory:
-            // Not really clear how this should be handled.
-            st_type = stivale2_mmap_type::RESERVED;
-            break;
-        default:
-            st_type = stivale2_mmap_type::RESERVED;
-        }
-
-        st2_memmap.add_entry(st_type, efi_mem_iter->PhysicalStart,
-                efi_mem_iter->NumberOfPages * 0x1000u);
-        efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
-    }
-
-    efiMemMapPtr.reset();
-
-    uint64_t kernel_size = kernel_alloc.page_count() * 0x1000u;
-    st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get(), kernel_size);
-
     // Framebuffer setup
 
     stivale2_struct_tag_framebuffer fbinfo;
@@ -1045,6 +946,129 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     uint64_t fb_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
 
+    // Build Stivale2 memory map from EFI memory map
+
+    // This is a little tricky. Since we keep the stivale2 memory map in allocated memory, the
+    // map may change between when we retrieve it and when we convert it to stivale2 format.
+    // We'll allocate space first to try to avoid this - enough for 64 entries. If necessary we
+    // can loop back and re-build the map from scratch.
+
+    // Note: debugging output is risky from this point. Writing to EFI console may affect memory
+    // map key.
+
+    // Allocate Stivale2 memmap
+    tosaithe_stivale2_memmap st2_memmap;
+    if (!st2_memmap.allocate(64)) { // hopefully big enough
+        con_write(L"*** Memory allocation failed ***\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    retrieve_efi_memmap:
+
+    UINTN memMapSize = 0;
+    UINTN memMapKey = 0;
+    UINTN memMapDescrSize = 0;
+    uint32_t memMapDescrVersion = 0;
+    status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+    if (status != EFI_BUFFER_TOO_SMALL) {
+        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    // con_write(L"building mem map 2...\r\n"); // XXX
+
+    efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efiMemMapPtr;
+
+    {
+        EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
+
+        if (efiMemMap == nullptr) {
+            con_write(L"*** Memory allocation failed ***\r\n");
+            return EFI_LOAD_ERROR;
+        }
+
+        status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+        while (status == EFI_BUFFER_TOO_SMALL) {
+            // Above allocation may have increased size of memory map, so we keep trying
+            free_pool(efiMemMap);
+            efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
+            if (efiMemMap == nullptr) {
+                con_write(L"*** Memory allocation failed ***\r\n");
+                return EFI_LOAD_ERROR;
+            }
+            status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+        }
+
+        efiMemMapPtr.reset(efiMemMap);
+    }
+
+    retrieve_efi_memmap_2:
+
+    if (EFI_ERROR(status)) {
+        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
+    // Copy entries from EFI memory map to Stivale2 map
+    auto *efi_mem_iter = efiMemMapPtr.get();
+    auto *efi_mem_end = (EFI_MEMORY_DESCRIPTOR *)((char *)efiMemMapPtr.get() + memMapSize);
+    while (efi_mem_iter < efi_mem_end) {
+
+        stivale2_mmap_type st_type;
+
+        switch (efi_mem_iter->Type) {
+        case EfiReservedMemoryType:
+            st_type = stivale2_mmap_type::RESERVED;
+            break;
+        case EfiLoaderCode:
+        case EfiLoaderData:
+        case EfiBootServicesCode:
+        case EfiBootServicesData:
+            st_type = stivale2_mmap_type::BOOTLOADER_RECLAIMABLE;
+            break;
+        case EfiRuntimeServicesCode:
+        case EfiRuntimeServicesData:
+            // Stivale2 has no suitable memory type to indicate EFI runtime services use.
+            // If we specify it as USABLE or RECLAIMABLE, runtime services won't be usable.
+            st_type = stivale2_mmap_type::RESERVED;
+            break;
+        case EfiConventionalMemory:
+            st_type = stivale2_mmap_type::USABLE;
+            break;
+        case EfiUnusableMemory:
+            st_type = stivale2_mmap_type::BAD_MEMORY;
+            break;
+        case EfiACPIReclaimMemory:
+            st_type = stivale2_mmap_type::ACPI_RECLAIMABLE;
+            break;
+        case EfiACPIMemoryNVS:
+            st_type = stivale2_mmap_type::ACPI_NVS;
+            break;
+        case EfiMemoryMappedIO:
+        case EfiMemoryMappedIOPortSpace:
+        case EfiPalCode:
+            st_type = stivale2_mmap_type::RESERVED;
+            break;
+        case EfiPersistentMemory:
+            // Not really clear how this should be handled.
+            st_type = stivale2_mmap_type::RESERVED;
+            break;
+        default:
+            st_type = stivale2_mmap_type::RESERVED;
+        }
+
+        st2_memmap.add_entry(st_type, efi_mem_iter->PhysicalStart,
+                efi_mem_iter->NumberOfPages * 0x1000u);
+        efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
+    }
+
+    // We won't release the map here, even though we no longer need it, since that would affect
+    // the map and potentially our ability to successfully cal ExitBootServices().
+    // -> Don't: efiMemMapPtr.reset();
+
+    uint64_t kernel_size = kernel_alloc.page_count() * 0x1000u;
+    st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get(), kernel_size);
+
     st2_memmap.insert_entry(stivale2_mmap_type::FRAMEBUFFER, fbinfo.framebuffer_addr, fb_size);
     st2_memmap.sort();
 
@@ -1055,10 +1079,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     st2_memmap_tag->tag.next = &fbinfo.tag;
 
     // TODO high-half pointers support
-
-    // TODO: exit boot services?
-
-    // (for later: SetVirtualMemoryMap to allow EFI runtime services to be used in kernel mode?)
 
     // Enable paging (4-level)
 
@@ -1079,10 +1099,26 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             : "=a"(cr4flags)
     );
 
-    con_write(L"cr4 flags = "); con_write(cr4flags); con_write(L"\r\n");
     if (cr4flags & 0x1000) {
         con_write(L"Uh-oh, LA57 was enabled by firmware :(\r\n");  // TODO
         return EFI_LOAD_ERROR;
+    }
+
+    // Exit boot services: there is no going back from here...
+    if (EBS->ExitBootServices(ImageHandle, memMapKey) == EFI_INVALID_PARAMETER) {
+        st2_memmap.clear();
+
+        status = EBS->GetMemoryMap(&memMapSize, efiMemMapPtr.get(), &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+        if (EFI_ERROR(status)) {
+            if (status != EFI_BUFFER_TOO_SMALL) {
+                con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+                return EFI_LOAD_ERROR;
+            }
+            goto retrieve_efi_memmap;
+        }
+
+        // we've already got the EFI memory map now, so skip that step and just rebuild the stivale map:
+        goto retrieve_efi_memmap_2;
     }
 
     // Now, put our page tables in place:
