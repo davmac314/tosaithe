@@ -243,6 +243,10 @@ static const char * const msg_lbrace_after_entry = "expecting '{' after 'entry:'
 static const char * const msg_rbrace_after_entry = "expecting '}' at end of entry";
 static const char * const msg_equals_after_var = "expecting '=' after identifier in entry setting";
 static const char * const msg_value_after_equals = "expecting value after '=' in entry setting";
+static const char * const msg_quote_end_string = "expecting ' (quote) at end of string value";
+static const char * const msg_unrecognized_value = "unrecognized setting value";
+static const char * const msg_unrecognized_entry_type = "unrecognized entry type";
+static const char * const msg_unrecognized_setting = "unrecognized setting";
 
 class utf8to16
 {
@@ -303,17 +307,17 @@ std::wstring read_assignment_value(std::string_view &conf)
             conf.remove_prefix(1);
         }
 
-        // TODO check that we got trailing '''
+        if (conf.empty) {
+            throw parse_exception {msg_quote_end_string};
+        }
+
         // TODO check for trailing junk (allow trailing comment)
         skip_to_next_line(conf);
 
         return uu.get_output();
     }
-    else {
-        // XXX
-    }
 
-    return L""; // XXX
+    throw parse_exception {msg_unrecognized_value};
 }
 
 // parse an entry - everything between braces
@@ -345,7 +349,7 @@ menu_entry parse_entry(std::string_view &conf)
                     entry.entry_type = menu_entry::STIVALE2;
                 }
                 else {
-                    // XXX
+                    throw parse_exception {msg_unrecognized_entry_type};
                 }
             }
             else if (ident == "cmdline") {
@@ -387,7 +391,7 @@ std::vector<menu_entry> parse_config(char *conf_buf, UINTN buf_size)
                 conf.remove_prefix(1);
             }
             else {
-                // XXX
+                throw parse_exception {msg_unrecognized_setting};
             }
         }
 
