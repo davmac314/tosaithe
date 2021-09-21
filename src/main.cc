@@ -307,7 +307,7 @@ std::wstring read_assignment_value(std::string_view &conf)
             conf.remove_prefix(1);
         }
 
-        if (conf.empty) {
+        if (conf.empty()) {
             throw parse_exception {msg_quote_end_string};
         }
 
