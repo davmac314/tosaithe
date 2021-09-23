@@ -2,17 +2,10 @@ EFICFLAGS ?= -ffreestanding -fshort-wchar -maccumulate-outgoing-args -march=x86-
 # -mabi=ms
 CXXFLAGS ?= -g -Os -Wall -fno-rtti
 
-# (Not using efl2efi any more)
+# (Not needed if using primary link method below)
 #ELF2EFI64=elf2efi64
 
 all: tosaithe.efi
-
-#tosaithe.efi: main.o
-#	ld -Map tosaithe.efi.so.map -q -Bsymbolic -Bsymbolic-functions -T link-elf-efi.lds \
-#	  -o tosaithe.efi.so \
-#	  main.o
-#	strip --strip-debug -o tosaithe-stripped.efi.so tosaithe.efi.so
-#	$(ELF2EFI64) --subsystem=10 tosaithe-stripped.efi.so tosaithe.efi
 
 # We have to link twice: the first time as ELF, to produce the .eh_frame_hdr section (--eh-frame-hdr).
 # The second time to convert to PEI.
@@ -28,6 +21,17 @@ tosaithe.efi: main.o stivale2.o cxxsupport.o
 	  -o tosaithe.efi --oformat pei-x86-64 \
 	  -m i386pep --subsystem 10 --image-base 0 \
 	  --enable-reloc-section
+
+# Alternative linking method: works with lld (ld.lld), but requires elf2efi
+#tosaithe.efi: main.o stivale2.o cxxsupport.o
+#	ld -Map tosaithe.efi.so.map -q -Bsymbolic -Bsymbolic-functions -T link-elf.lds \
+#	  -o tosaithe.efi.so \
+#	  main.o stivale2.o cxxsupport.o \
+#	  --eh-frame-hdr \
+#	  -L ../lib -lunwind -lcxxabi -lbmcxx \
+#	  -Map=tosaithe.efi.so.map -o tosaithe.efi.so
+#	strip --strip-debug -o tosaithe-stripped.efi.so tosaithe.efi.so
+#	$(ELF2EFI64) --subsystem=10 tosaithe-stripped.efi.so tosaithe.efi
 
 main.o: main.cc
 	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c main.cc
