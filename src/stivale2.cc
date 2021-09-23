@@ -958,7 +958,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // Framebuffer setup
 
     stivale2_framebuffer_info fbinfo;
-    uint64_t fb_size;
+    uint64_t fb_size = 0;
     fbinfo.tag.identifier = STIVALE2_LT_FRAMEBUFFER_TAGID;
     fbinfo.tag.next = nullptr;
 
