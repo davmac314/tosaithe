@@ -925,8 +925,9 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     //    0xFFFF FFFF 8000 0000 <-- corresponds to (top - 2GB)
     //
     // Stivale2 spec says the first of the above is mapped to address 0, with a 4GB mapping "plus
-    // any additional memory map entry", whatever that means. We may as well just map as much as
-    // possible (and cover, hopefully, all available memory).
+    // any additional memory map entry", meaning that any memory in the memory map should be
+    // mapped also. We may as well just map as much as possible (and cover, hopefully, all
+    // available memory).
     //
     // Pagewise:
     //   0xFFFF 8000 0000 0000 = PML4[256][0]
@@ -1080,8 +1081,8 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
     }
 
-    // We won't release the map here, even though we no longer need it, since that would affect
-    // the map and potentially our ability to successfully cal ExitBootServices().
+    // We won't release the map here, even though we no longer need it, since that could affect
+    // the map and potentially our ability to successfully call ExitBootServices().
     // -> Don't: efiMemMapPtr.reset();
 
     uint64_t kernel_size = kernel_alloc.page_count() * 0x1000u;
