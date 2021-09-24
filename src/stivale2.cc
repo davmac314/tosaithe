@@ -358,7 +358,7 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
     auto *remaining_path = kernel_path.get();
     status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &remaining_path, &loadDevice);
     kernel_path = nullptr;
-    if (EFI_ERROR(EFI_SUCCESS)) {
+    if (EFI_ERROR(status)) {
         con_write(L"Couldn't get file system protocol for kernel path\r\n");
         return false;
     }
@@ -367,14 +367,14 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
 
     status = EBS->HandleProtocol(loadDevice, &EFI_simple_file_system_protocol_guid,
             (void **)&sfs_protocol);
-    if (EFI_ERROR(EFI_SUCCESS) || (sfs_protocol == nullptr /* firmware misbehaving */)) {
+    if (EFI_ERROR(status) || (sfs_protocol == nullptr /* firmware misbehaving */)) {
         con_write(L"Couldn't get file system protocol for kernel path\r\n");
         return false;
     }
 
     EFI_FILE_PROTOCOL *fs_root = nullptr;
     status = sfs_protocol->OpenVolume(sfs_protocol, &fs_root);
-    if (EFI_ERROR(EFI_SUCCESS) || (fs_root == nullptr /* firmware misbehaving */)) {
+    if (EFI_ERROR(status) || (fs_root == nullptr /* firmware misbehaving */)) {
         con_write(L"Couldn't open volume (fs protocol)\r\n");
         return false;
     }
@@ -382,7 +382,7 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
     EFI_FILE_PROTOCOL *kernel_file = nullptr;
     status = fs_root->Open(fs_root, &kernel_file, exec_path, EFI_FILE_MODE_READ, 0);
     fs_root->Close(fs_root);
-    if (EFI_ERROR(EFI_SUCCESS) || kernel_file == nullptr) {
+    if (EFI_ERROR(status) || kernel_file == nullptr) {
         con_write(L"Couldn't open kernel file\r\n");
         return false;
     }
@@ -762,7 +762,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             }
 
             status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, alloc_pages, &alloc_from);
-            if (EFI_ERROR(EFI_SUCCESS)) {
+            if (EFI_ERROR(status)) {
                 // TODO if PIE, can relocate completely
                 con_write(L"Couldn't allocate kernel memory\r\n");
                 kernel_file->Close(kernel_file);
@@ -790,7 +790,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             UINTN additional_reqd = total_pages_required - kernel_pages;
 
             status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, additional_reqd, &kernel_alloc_limit);
-            if (EFI_ERROR(EFI_SUCCESS)) {
+            if (EFI_ERROR(status)) {
                 // TODO if PIE, can relocate completely
                 con_write(L"Couldn't allocate kernel memory\r\n");
                 kernel_file->Close(kernel_file);
