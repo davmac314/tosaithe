@@ -681,44 +681,45 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
         uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
-        Elf64_Phdr *phdr = (Elf64_Phdr *)ph_addr;
-        if (phdr->p_type == PT_LOAD) {
+        Elf64_Phdr phdr;
+        std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
+        if (phdr.p_type == PT_LOAD) {
             num_loadable_segs++;
-            uintptr_t voffs = adj_vptr(phdr->p_vaddr) - phdr->p_offset;
+            uintptr_t voffs = adj_vptr(phdr.p_vaddr) - phdr.p_offset;
 
-            if (phdr->p_vaddr > 0x8000000000000000u && phdr->p_vaddr < high_half_addr) {
+            if (phdr.p_vaddr > 0x8000000000000000u && phdr.p_vaddr < high_half_addr) {
                 // Address in the high-half, but not in the "special" region (-2GB -- 0). Stivale2
                 // doesn't support this (though it's not explicitly forbidden).
                 con_write(L"Unsupported ELF structure\r\n");
                 return EFI_LOAD_ERROR;
             }
 
-            if (phdr->p_vaddr + phdr->p_memsz < phdr->p_vaddr /* overflow */) {
+            if (phdr.p_vaddr + phdr.p_memsz < phdr.p_vaddr /* overflow */) {
                 con_write(L"Bad ELF structure\r\n");
                 return EFI_LOAD_ERROR;
             }
 
-            if (adj_vptr(phdr->p_vaddr) < phdr->p_offset) {
+            if (adj_vptr(phdr.p_vaddr) < phdr.p_offset) {
                 has_regular_structure = false;
             }
 
             if (!found_loadable) {
                 file_voffs = voffs;
-                lowest_vaddr = adj_vptr(phdr->p_vaddr);
-                highest_vaddr = adj_vptr(phdr->p_vaddr) + phdr->p_memsz;
+                lowest_vaddr = adj_vptr(phdr.p_vaddr);
+                highest_vaddr = adj_vptr(phdr.p_vaddr) + phdr.p_memsz;
                 found_loadable = true;
             }
             else {
                 if (file_voffs != voffs) {
                     has_regular_structure = false;
                 }
-                lowest_vaddr = std::min(lowest_vaddr, adj_vptr(phdr->p_vaddr));
-                highest_vaddr = std::max(highest_vaddr, adj_vptr(phdr->p_vaddr) + phdr->p_memsz);
+                lowest_vaddr = std::min(lowest_vaddr, adj_vptr(phdr.p_vaddr));
+                highest_vaddr = std::max(highest_vaddr, adj_vptr(phdr.p_vaddr) + phdr.p_memsz);
             }
 
-            if (phdr->p_memsz > phdr->p_filesz) {
-                bss_areas.push_back(bss_area { adj_vptr(phdr->p_vaddr) + phdr->p_filesz,
-                    phdr->p_memsz - phdr->p_filesz });
+            if (phdr.p_memsz > phdr.p_filesz) {
+                bss_areas.push_back(bss_area { adj_vptr(phdr.p_vaddr) + phdr.p_filesz,
+                    phdr.p_memsz - phdr.p_filesz });
             }
         }
     }
@@ -835,11 +836,12 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
         for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
             uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
-            Elf64_Phdr *phdr = (Elf64_Phdr *)ph_addr;
-            if (phdr->p_type == PT_LOAD) {
+            Elf64_Phdr phdr;
+            std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
+            if (phdr.p_type == PT_LOAD) {
                 // Align start and end to pages
-                uintptr_t seg_start = adj_vptr(phdr->p_vaddr) & ~(uintptr_t)0xFFFu;
-                uintptr_t seg_end = (adj_vptr(phdr->p_vaddr) + phdr->p_memsz + 0xFFFu) & ~(uintptr_t)0xFFFu;
+                uintptr_t seg_start = adj_vptr(phdr.p_vaddr) & ~(uintptr_t)0xFFFu;
+                uintptr_t seg_end = (adj_vptr(phdr.p_vaddr) + phdr.p_memsz + 0xFFFu) & ~(uintptr_t)0xFFFu;
                 UINTN seg_pages = (seg_end - seg_start) / 0x1000u;
 
                 bool need_seg_alloc = true;
@@ -953,21 +955,23 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    Elf64_Shdr *sh_string_section = (Elf64_Shdr *)(kernel_addr + section_headers_start
-            + (elf_hdr->e_shentsize * elf_hdr->e_shstrndx));
-    char *sh_string_start = (char *)(kernel_addr + sh_string_section->sh_offset);
+    Elf64_Shdr sh_string_section;
+    std::memcpy(&sh_string_section, (void *)(kernel_addr + section_headers_start
+            + (elf_hdr->e_shentsize * elf_hdr->e_shstrndx)), sizeof(sh_string_section));
+    char *sh_string_start = (char *)(kernel_addr + sh_string_section.sh_offset);
 
     stivale2_header *sv2_header = nullptr;
 
     for (unsigned i = 0; i < num_section_hdrs; i++) {
-        Elf64_Shdr *section_hdr = (Elf64_Shdr *)(kernel_addr + section_headers_start
-                + (elf_hdr->e_shentsize * i));
-        uint16_t name_offs = section_hdr->sh_name;
-        if (name_offs >= sh_string_section->sh_size) {
+        Elf64_Shdr section_hdr;
+        std::memcpy(&section_hdr, (void *)(kernel_addr + section_headers_start
+                + (elf_hdr->e_shentsize * i)), sizeof(section_hdr));
+        uint16_t name_offs = section_hdr.sh_name;
+        if (name_offs >= sh_string_section.sh_size) {
             con_write(L"Bad ELF structure\r\n");
             return EFI_LOAD_ERROR;
         }
-        std::string_view section_name { sh_string_start + name_offs, sh_string_section->sh_size - name_offs };
+        std::string_view section_name { sh_string_start + name_offs, sh_string_section.sh_size - name_offs };
         auto nul_pos = section_name.find('\0');
         if (nul_pos == std::string_view::npos) {
             con_write(L"Bad ELF structure\r\n");
@@ -976,7 +980,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         section_name = section_name.substring(0, nul_pos);
 
         if (section_name == ".stivale2hdr") {
-            sv2_header = (stivale2_header *)(kernel_addr + section_hdr->sh_offset);
+            sv2_header = (stivale2_header *)(kernel_addr + section_hdr.sh_offset);
         }
     }
 
@@ -1004,10 +1008,11 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (!has_regular_structure) {
         for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
             uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
-            Elf64_Phdr *phdr = (Elf64_Phdr *)ph_addr;
-            if (phdr->p_type == PT_LOAD) {
-                std::memcpy((void *)adj_vptr(phdr->p_vaddr), (void *)(kernel_addr + phdr->p_offset),
-                        phdr->p_memsz);
+            Elf64_Phdr phdr;
+            std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
+            if (phdr.p_type == PT_LOAD) {
+                std::memcpy((void *)adj_vptr(phdr.p_vaddr), (void *)(kernel_addr + phdr.p_offset),
+                        phdr.p_memsz);
             }
         }
         kernel_alloc.reset();
