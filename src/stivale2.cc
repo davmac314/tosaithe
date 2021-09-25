@@ -686,6 +686,18 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             num_loadable_segs++;
             uintptr_t voffs = adj_vptr(phdr->p_vaddr) - phdr->p_offset;
 
+            if (phdr->p_vaddr > 0x8000000000000000u && phdr->p_vaddr < high_half_addr) {
+                // Address in the high-half, but not in the "special" region (-2GB -- 0). Stivale2
+                // doesn't support this (though it's not explicitly forbidden).
+                con_write(L"Unsupported ELF structure\r\n");
+                return EFI_LOAD_ERROR;
+            }
+
+            if (phdr->p_vaddr + phdr->p_memsz < phdr->p_vaddr /* overflow */) {
+                con_write(L"Bad ELF structure\r\n");
+                return EFI_LOAD_ERROR;
+            }
+
             if (adj_vptr(phdr->p_vaddr) < phdr->p_offset) {
                 has_regular_structure = false;
             }
