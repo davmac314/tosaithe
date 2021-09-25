@@ -505,6 +505,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (!open_kernel_file(ImageHandle, exec_path, &kernel_file, &kernel_file_size)) {
         return EFI_LOAD_ERROR;
     }
+    // TODO wrap kernel_file in an owning object
 
     // Allocate space for kernel file
     // For now we'll load a portion at an arbitrary address. We'll allocate 128kb and read at most
@@ -664,41 +665,47 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // bss areas need to be cleared before entry to kernel
     std::vector<bss_area> bss_areas;
 
+    // A "regular" structure means: all segments have the same file-position/address offset, and
+    // that offset is greater than 0 (i.e. the virtual address of each segment is greater than its
+    // file position). If we have a regular-structure kernel, we'll load it "in place". For now we
+    // assume regular structure, and set false if necessary while parsing the segment headers.
+    bool has_regular_structure = true;
+
+    // Need to account for values in upper half
+    const uintptr_t high_half_addr = 0xFFFFFFFF80000000;
+    auto adj_vptr = [](uintptr_t vptr) {
+        return vptr > high_half_addr ? (vptr - high_half_addr) : vptr;
+    };
+
+    unsigned num_loadable_segs = 0;
+
     for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
         uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
         Elf64_Phdr *phdr = (Elf64_Phdr *)ph_addr;
         if (phdr->p_type == PT_LOAD) {
-            uintptr_t voffs = phdr->p_vaddr - phdr->p_offset;
+            num_loadable_segs++;
+            uintptr_t voffs = adj_vptr(phdr->p_vaddr) - phdr->p_offset;
 
-            if (phdr->p_vaddr < phdr->p_offset) {
-                // technically possible, but unsupported
-                // TODO support this
-                con_write(L"Unsupported ELF structure\r\n");
-                kernel_file->Close(kernel_file);
-                return EFI_LOAD_ERROR;
+            if (adj_vptr(phdr->p_vaddr) < phdr->p_offset) {
+                has_regular_structure = false;
             }
 
             if (!found_loadable) {
                 file_voffs = voffs;
-                lowest_vaddr = phdr->p_vaddr;
-                highest_vaddr = phdr->p_vaddr + phdr->p_memsz;
+                lowest_vaddr = adj_vptr(phdr->p_vaddr);
+                highest_vaddr = adj_vptr(phdr->p_vaddr) + phdr->p_memsz;
                 found_loadable = true;
             }
             else {
                 if (file_voffs != voffs) {
-                    // This segment has a different file/address offset than the previous one(s).
-                    // Technically possible, but unsupported.
-                    // TODO support this
-                    con_write(L"Unsupported ELF structure\r\n");
-                    kernel_file->Close(kernel_file);
-                    return EFI_LOAD_ERROR;
+                    has_regular_structure = false;
                 }
-                lowest_vaddr = std::min(lowest_vaddr, phdr->p_vaddr);
-                highest_vaddr = std::max(highest_vaddr, phdr->p_vaddr + phdr->p_memsz);
+                lowest_vaddr = std::min(lowest_vaddr, adj_vptr(phdr->p_vaddr));
+                highest_vaddr = std::max(highest_vaddr, adj_vptr(phdr->p_vaddr) + phdr->p_memsz);
             }
 
             if (phdr->p_memsz > phdr->p_filesz) {
-                bss_areas.push_back(bss_area { phdr->p_offset + phdr->p_filesz,
+                bss_areas.push_back(bss_area { adj_vptr(phdr->p_vaddr) + phdr->p_filesz,
                     phdr->p_memsz - phdr->p_filesz });
             }
         }
@@ -710,9 +717,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    // Need to account for values in upper half
-    const uintptr_t high_half_addr = 0xFFFFFFFF80000000;
-
     uintptr_t adj_voffs = file_voffs;
     if (adj_voffs >= high_half_addr) adj_voffs -= high_half_addr;
 
@@ -720,11 +724,13 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // may soon change.
     EFI_PHYSICAL_ADDRESS kernel_addr = kernel_alloc.get();
 
-    {
+    std::vector<efi_page_alloc> segment_allocs;
+
+    if (has_regular_structure) {
         UINTN kernel_pages = kernel_alloc.page_count();
 
         // The limit of the current allocation for kernel (+1)
-        uintptr_t kernel_alloc_limit = (kernel_current_limit + 0xFFFu) / 0x1000u;
+        uintptr_t kernel_alloc_limit = (kernel_current_limit + 0xFFFu) & ~(uintptr_t)0xFFFu;
         // The page address of the kernel allocation
         uintptr_t kernel_page_addr = kernel_addr;
 
@@ -785,7 +791,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
         // Allocate memory for the rest of the kernel, including any bss
         uintptr_t kernel_limit = std::max(kernel_file_size, highest_vaddr - file_voffs);
-        UINTN total_pages_required = (kernel_limit + kernel_addr + 0xFFFu) / 0x1000u;
+        UINTN total_pages_required = (kernel_limit + 0xFFFu) / 0x1000u;
         if (total_pages_required > kernel_pages) {
             UINTN additional_reqd = total_pages_required - kernel_pages;
 
@@ -799,6 +805,104 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
             kernel_pages = total_pages_required;
             kernel_alloc.rezone(kernel_addr, kernel_pages);
+        }
+    }
+    else {
+        // "irregular" structure. Almost the opposite of the regular structure case: we want to
+        // ensure that we load the kernel into an area that doesn't overlap its final resting
+        // place at all.
+
+        uintptr_t kernel_req_pages = (kernel_file_size + 0xFFFu) / 0x1000u;
+        uintptr_t kernel_limit_page = kernel_addr / 0x1000u + kernel_req_pages;
+        uintptr_t kernel_required_limit = kernel_limit_page * 0x1000u;
+
+        // For each segment: make sure our loaded kernel doesn't/won't overlap it;
+        // allocate pages for it
+
+        segment_allocs.reserve(num_loadable_segs);
+
+        for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
+            uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
+            Elf64_Phdr *phdr = (Elf64_Phdr *)ph_addr;
+            if (phdr->p_type == PT_LOAD) {
+                // Align start and end to pages
+                uintptr_t seg_start = adj_vptr(phdr->p_vaddr) & ~(uintptr_t)0xFFFu;
+                uintptr_t seg_end = (adj_vptr(phdr->p_vaddr) + phdr->p_memsz + 0xFFFu) & ~(uintptr_t)0xFFFu;
+                UINTN seg_pages = (seg_end - seg_start) / 0x1000u;
+
+                bool need_seg_alloc = true;
+
+                // Check overlap!
+                if (kernel_required_limit > seg_start && kernel_addr < seg_end) {
+                    // There must be overlap.
+                    // First, try to reallocate just past highest_vaddr (i.e. a region which
+                    // definitely overlaps no segments).
+                    efi_page_alloc new_alloc;
+                    uintptr_t new_alloc_start = (highest_vaddr + 0xFFFu) & ~(uintptr_t)0xFFFu;
+
+                    if (new_alloc.allocate_nx(new_alloc_start, kernel_req_pages)) {
+                        std::memcpy((void *)highest_vaddr, (void *)kernel_addr,
+                                kernel_alloc.page_count() * 0x1000u);
+                        kernel_alloc = std::move(new_alloc);
+                        kernel_addr = new_alloc_start;
+                        kernel_required_limit = kernel_addr + kernel_req_pages * 0x1000u;
+                    }
+                    else {
+                        // If we can't do that, allocate space around the kernel image so that the
+                        // entire segment area is allocated, then allocate a new space for the kernel
+                        // image (at an arbitrary address).
+
+                        efi_page_alloc pre_alloc;
+                        efi_page_alloc post_alloc;
+                        if (seg_start < kernel_addr) {
+                            pre_alloc.allocate(seg_start, (kernel_addr - seg_start) / 0x1000u);
+                        }
+                        if (kernel_required_limit < seg_end) {
+                            post_alloc.allocate(kernel_required_limit, (seg_end - kernel_required_limit)
+                                    / 0x1000u);
+                        }
+
+                        new_alloc.allocate(kernel_req_pages);
+                        std::memcpy((void *)new_alloc.get(), (void *)kernel_addr,
+                                kernel_alloc.page_count() * 0x1000u);
+
+                        // Now free any part of the original allocation which doesn't overlap segment
+                        if (kernel_addr < seg_start) {
+                            pre_alloc.rezone(kernel_addr, (seg_start - kernel_addr) / 0x1000u);
+                            pre_alloc.reset();
+                        }
+                        if (seg_end < kernel_required_limit) {
+                            post_alloc.rezone(seg_end, (kernel_required_limit - seg_end) / 0x1000u);
+                            post_alloc.reset();
+                        }
+
+                        // We can now already got a segment allocation
+                        kernel_alloc.rezone(seg_start, seg_pages);
+                        segment_allocs.emplace_back(std::move(kernel_alloc));
+                        need_seg_alloc = false;
+
+                        kernel_alloc = std::move(new_alloc);
+                        kernel_addr = new_alloc.get();
+                        kernel_required_limit = kernel_addr + kernel_req_pages * 0x1000u;
+                    }
+                }
+
+                if (need_seg_alloc) {
+                    // allocate
+                    auto &seg_alloc = segment_allocs.emplace_back();
+                    seg_alloc.allocate(seg_start, seg_pages);
+                }
+            }
+        }
+
+        // Make sure we allocated enough space for whole kernel image in kernel_alloc
+        if (kernel_alloc.page_count() != kernel_req_pages) {
+            UINTN extra_pages_reqd = kernel_req_pages - kernel_alloc.page_count();
+            status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, extra_pages_reqd, &kernel_required_limit);
+            if (EFI_ERROR(status)) {
+                throw std::bad_alloc();
+            }
+            kernel_alloc.rezone(kernel_addr, kernel_req_pages);
         }
     }
 
@@ -860,7 +964,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         section_name = section_name.substring(0, nul_pos);
 
         if (section_name == ".stivale2hdr") {
-            con_write(L"found stivale2hdr section, index = "); con_write(i); con_write(L"\r\n"); // XXX
             sv2_header = (stivale2_header *)(kernel_addr + section_hdr->sh_offset);
         }
     }
@@ -884,6 +987,19 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             ? (stivale_entry_t) elf_hdr->e_entry : (stivale_entry_t) sv2_entry_point;
 
     // TODO check tags - at least "any video" or "framebuffer" tags must be present
+
+    // If irregular structure, now need to move segments to right location.
+    if (!has_regular_structure) {
+        for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
+            uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
+            Elf64_Phdr *phdr = (Elf64_Phdr *)ph_addr;
+            if (phdr->p_type == PT_LOAD) {
+                std::memcpy((void *)adj_vptr(phdr->p_vaddr), (void *)(kernel_addr + phdr->p_offset),
+                        phdr->p_memsz);
+            }
+        }
+        kernel_alloc.reset();
+    }
 
     // Zero out bss (parts of segments which have no corresponding file backing)
     for (bss_area bss : bss_areas) {
@@ -994,8 +1110,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    // con_write(L"building mem map 2...\r\n"); // XXX
-
     efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efiMemMapPtr;
 
     {
@@ -1085,8 +1199,17 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // the map and potentially our ability to successfully call ExitBootServices().
     // -> Don't: efiMemMapPtr.reset();
 
-    uint64_t kernel_size = kernel_alloc.page_count() * 0x1000u;
-    st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get(), kernel_size);
+    // Insert memory-map entries for kernel
+    if (kernel_alloc) {
+        uint64_t kernel_size = kernel_alloc.page_count() * 0x1000u;
+        st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get(), kernel_size);
+    }
+    else {
+        for (auto &alloc : segment_allocs) {
+            uint64_t segment_size = alloc.page_count() * 0x1000u;
+            st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES,alloc.get(), segment_size);
+        }
+    }
 
     if (fb_size != 0) {
         st2_memmap.insert_entry(stivale2_mmap_type::FRAMEBUFFER, fbinfo.framebuffer_addr, fb_size);

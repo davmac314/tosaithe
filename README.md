@@ -32,10 +32,6 @@ half.
 
 Position independence is not supported (the kernel will be loaded at its nominal address).
 
-The ELF segments must be contiguous and their virtual address must not be less than their file
-offset. (Both requirements are met by most common ELF files, and it would take a fairly funky
-linker script or linker to produce an ELF file that Tosaithe won't handle).
-
 The Stivale2 requirement that PIC and APIC IRQs are disabled is not currently implemented. The
 kernel should ensure IRQs are masked itself before enabling interrupts.
 
