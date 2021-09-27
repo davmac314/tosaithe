@@ -141,6 +141,31 @@ public:
     EFI_PHYSICAL_ADDRESS get_ptr() const noexcept { return get().first; }
 };
 
+// deleter for use by efi_file_handle
+class efi_file_closer
+{
+public:
+    using pointer = EFI_FILE_PROTOCOL *;
+
+    void operator()(pointer v)
+    {
+        v->Close(v);
+    }
+};
+
+// An owning file handle for EFI_FILE_PROTOCOL-based files.
+class efi_file_handle : public std::unique_ptr<void, efi_file_closer>
+{
+public:
+    using unique_ptr::unique_ptr;
+
+    EFI_STATUS read(UINTN *read_amount, void *addr)
+    {
+        auto fd = get();
+        return fd->Read(fd, read_amount, addr);
+    }
+};
+
 inline void con_write(const CHAR16 *str)
 {
     EFI_con_out->OutputString(EFI_con_out, str);

@@ -500,11 +500,12 @@ static void check_framebuffer(stivale2_framebuffer_info *fbinfo, uint64_t *fb_si
 
 EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine)
 {
-    EFI_FILE_PROTOCOL *kernel_file;
+    EFI_FILE_PROTOCOL *kernel_file__;
     UINTN kernel_file_size;
-    if (!open_kernel_file(ImageHandle, exec_path, &kernel_file, &kernel_file_size)) {
+    if (!open_kernel_file(ImageHandle, exec_path, &kernel_file__, &kernel_file_size)) {
         return EFI_LOAD_ERROR;
     }
+    auto kernel_handle = efi_file_handle(kernel_file__);
     // TODO wrap kernel_file in an owning object
 
     // Allocate space for kernel file
@@ -529,10 +530,9 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     }
 
     UINTN read_amount = first_chunk;
-    EFI_STATUS status = kernel_file->Read(kernel_file, &read_amount, (void *)kernel_alloc.get_ptr());
+    EFI_STATUS status = kernel_handle.read(&read_amount, (void *)kernel_alloc.get_ptr());
 
     if (EFI_ERROR(status)) {
-        kernel_file->Close(kernel_file);
         con_write(L"Couldn't read kernel file; ");
         if (status == EFI_NO_MEDIA) {
             con_write(L"status: NO_MEDIA\r\n");
@@ -564,7 +564,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // check e_ident
     if (std::char_traits<char>::compare((const char *)elf_hdr->e_ident, ELFMAGIC, 4) != 0) {
         con_write(L"Incorrect ELF header, not a valid ELF file\r\n");
-        kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
@@ -572,21 +571,18 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     static_assert(sizeof(void*) == 4 || sizeof(void*) == 8, "pointer size must be 4/8 bytes");
     if ((sizeof(void*) == 4 && elf_class != ELFCLASS32) || (sizeof(void*) == 8 && elf_class != ELFCLASS64)) {
         con_write(L"Wrong ELF class (64/32 bit)\r\n");
-        kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
     unsigned elf_version = elf_hdr->e_ident[EI_VERSION];
     if (elf_version != EV_CURRENT) {
         con_write(L"Unsupported ELF version\r\n");
-        kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
     unsigned elf_data_enc = elf_hdr->e_ident[EI_DATA];
     if (elf_data_enc != ELFDATA2LSB /* && elf_data_enc != ELFDATA2MSB */) {
         con_write(L"Unsupported ELF data encoding\r\n");
-        kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
@@ -594,13 +590,11 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     if (elf_hdr->e_machine != EM_X86_64) {
         con_write(L"Wrong or unsupported ELF machine type\r\n");
-        kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
     if (elf_hdr->e_phnum == PH_XNUM) {
         con_write(L"Too many ELF program headers\r\n");
-        kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
@@ -613,7 +607,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (elf_ph_off >= kernel_file_size
             || ((kernel_file_size - elf_ph_off) / elf_ph_ent_size) < elf_ph_ent_num) {
         con_write(L"Bad ELF structure\r\n");
-        kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
@@ -637,8 +630,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
         kernel_alloc.rezone(kernel_alloc.get_ptr(), kernel_alloc.page_count() + alloc_pages);
 
-        status = kernel_file->Read(kernel_file, &read_amount,
-                (void *)(kernel_alloc.get_ptr() + first_chunk));
+        status = kernel_handle.read(&read_amount, (void *)(kernel_alloc.get_ptr() + first_chunk));
         if (EFI_ERROR(status)) {
             con_write(L"Couldn't read kernel file\r\n");
             return EFI_LOAD_ERROR;
@@ -727,7 +719,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     if (!found_loadable) {
         con_write(L"No loadable segments in ELF\r\n");
-        kernel_file->Close(kernel_file);
         return EFI_LOAD_ERROR;
     }
 
@@ -785,7 +776,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             if (EFI_ERROR(status)) {
                 // TODO if PIE, can relocate completely
                 con_write(L"Couldn't allocate kernel memory\r\n");
-                kernel_file->Close(kernel_file);
                 return EFI_LOAD_ERROR;
             }
 
@@ -813,7 +803,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             if (EFI_ERROR(status)) {
                 // TODO if PIE, can relocate completely
                 con_write(L"Couldn't allocate kernel memory\r\n");
-                kernel_file->Close(kernel_file);
                 return EFI_LOAD_ERROR;
             }
 
@@ -925,15 +914,12 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     read_amount = kernel_file_size - first_chunk;
 
     if (read_amount > 0) {
-        status = kernel_file->Read(kernel_file, &read_amount, (void *)kernel_current_limit);
+        status = kernel_handle.read(&read_amount, (void *)kernel_current_limit);
         if (EFI_ERROR(status)) {
             con_write(L"Couldn't read kernel file\r\n");
-            kernel_file->Close(kernel_file);
             return EFI_LOAD_ERROR;
         }
     }
-
-    kernel_file->Close(kernel_file);
 
     // Find the stivale2 header (in the .stivale2hdr section).
 
@@ -1128,7 +1114,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efiMemMapPtr;
+    efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efi_memmap_ptr;
 
     {
         EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
@@ -1150,7 +1136,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
         }
 
-        efiMemMapPtr.reset(efiMemMap);
+        efi_memmap_ptr.reset(efiMemMap);
     }
 
     retrieve_efi_memmap_2:
@@ -1161,8 +1147,8 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     }
 
     // Copy entries from EFI memory map to Stivale2 map
-    auto *efi_mem_iter = efiMemMapPtr.get();
-    auto *efi_mem_end = (EFI_MEMORY_DESCRIPTOR *)((char *)efiMemMapPtr.get() + memMapSize);
+    auto *efi_mem_iter = efi_memmap_ptr.get();
+    auto *efi_mem_end = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_memmap_ptr.get() + memMapSize);
     while (efi_mem_iter < efi_mem_end) {
 
         stivale2_mmap_type st_type;
@@ -1283,7 +1269,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (EBS->ExitBootServices(ImageHandle, memMapKey) == EFI_INVALID_PARAMETER) {
         st2_memmap.clear();
 
-        status = EBS->GetMemoryMap(&memMapSize, efiMemMapPtr.get(), &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+        status = EBS->GetMemoryMap(&memMapSize, efi_memmap_ptr.get(), &memMapKey, &memMapDescrSize, &memMapDescrVersion);
         if (EFI_ERROR(status)) {
             if (status != EFI_BUFFER_TOO_SMALL) {
                 con_write(L"*** Could not retrieve EFI memory map ***\r\n");
