@@ -81,10 +81,11 @@ public:
         return true;
     }
 
-    // Insert an entry, which should be making use of available space only.
-    // On failure, returns false; in that case integrity of the map is no longer guaranteed.
-    // On success returns true: beware, map may require sorting
-    bool insert_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length) noexcept
+    // Insert an entry into the map. Any existing entries which are overlapped by the new entry are
+    // trimmed (or removed in the case of total overlap).
+    // On failure, throws std::bad_alloc.
+    // On success: beware, map may require sorting
+    void insert_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length)
     {
         auto &entries = st2_memmap->entries;
 
@@ -117,7 +118,7 @@ public:
                     // split
                     uint64_t newlen = ent_end - physend;
                     if (!add_entry(st2_memmap->memmap[i].type, physend, newlen)) {
-                        return false;
+                        throw std::bad_alloc();
                     }
                     ent_len = physaddr - ent_base;
                     st2_memmap->memmap[i].length = ent_len;
@@ -127,10 +128,8 @@ public:
 
         // Finally add the new entry:
         if (!add_entry(type_p, physaddr, length)) {
-            return false;
+            throw std::bad_alloc();
         }
-
-        return true;
     }
 
     void sort() noexcept
