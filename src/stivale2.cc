@@ -529,7 +529,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     }
 
     UINTN read_amount = first_chunk;
-    EFI_STATUS status = kernel_file->Read(kernel_file, &read_amount, (void *)kernel_alloc.get());
+    EFI_STATUS status = kernel_file->Read(kernel_file, &read_amount, (void *)kernel_alloc.get_ptr());
 
     if (EFI_ERROR(status)) {
         kernel_file->Close(kernel_file);
@@ -559,7 +559,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    Elf64_Ehdr *elf_hdr = (Elf64_Ehdr *) kernel_alloc.get();
+    Elf64_Ehdr *elf_hdr = (Elf64_Ehdr *) kernel_alloc.get_ptr();
 
     // check e_ident
     if (std::char_traits<char>::compare((const char *)elf_hdr->e_ident, ELFMAGIC, 4) != 0) {
@@ -620,7 +620,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // Do we need to expand the chunk read? (Typically we won't, the program headers tend to follow
     // immediately after the ELF header. But, we'll allow for the other case).
 
-    uintptr_t kernel_current_limit = kernel_alloc.get() + first_chunk;
+    uintptr_t kernel_current_limit = kernel_alloc.get_ptr() + first_chunk;
 
     uintptr_t elf_ph_end = elf_ph_off + elf_ph_ent_size * elf_ph_ent_num;
     if (elf_ph_end > first_chunk) {
@@ -635,9 +635,10 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             return EFI_LOAD_ERROR;
         }
 
-        kernel_alloc.rezone(kernel_alloc.get(), kernel_alloc.page_count() + alloc_pages);
+        kernel_alloc.rezone(kernel_alloc.get_ptr(), kernel_alloc.page_count() + alloc_pages);
 
-        status = kernel_file->Read(kernel_file, &read_amount, (void *)(kernel_alloc.get() + first_chunk));
+        status = kernel_file->Read(kernel_file, &read_amount,
+                (void *)(kernel_alloc.get_ptr() + first_chunk));
         if (EFI_ERROR(status)) {
             con_write(L"Couldn't read kernel file\r\n");
             return EFI_LOAD_ERROR;
@@ -680,7 +681,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     unsigned num_loadable_segs = 0;
 
     for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
-        uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
+        uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get_ptr();
         Elf64_Phdr phdr;
         std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
         if (phdr.p_type == PT_LOAD) {
@@ -735,7 +736,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     // From this point, kernel_addr is the address of the kernel. Currently page-aligned, though that
     // may soon change.
-    EFI_PHYSICAL_ADDRESS kernel_addr = kernel_alloc.get();
+    EFI_PHYSICAL_ADDRESS kernel_addr = kernel_alloc.get_ptr();
 
     std::vector<efi_page_alloc> segment_allocs;
 
@@ -835,7 +836,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         segment_allocs.reserve(num_loadable_segs);
 
         for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
-            uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
+            uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get_ptr();
             Elf64_Phdr phdr;
             std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
             if (phdr.p_type == PT_LOAD) {
@@ -877,7 +878,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
                         }
 
                         new_alloc.allocate(kernel_req_pages);
-                        std::memcpy((void *)new_alloc.get(), (void *)kernel_addr,
+                        std::memcpy((void *)new_alloc.get_ptr(), (void *)kernel_addr,
                                 kernel_alloc.page_count() * 0x1000u);
 
                         // Now free any part of the original allocation which doesn't overlap segment
@@ -896,7 +897,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
                         need_seg_alloc = false;
 
                         kernel_alloc = std::move(new_alloc);
-                        kernel_addr = new_alloc.get();
+                        kernel_addr = kernel_alloc.get_ptr();
                         kernel_required_limit = kernel_addr + kernel_req_pages * 0x1000u;
                     }
                 }
@@ -1007,7 +1008,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // If irregular structure, now need to move segments to right location.
     if (!has_regular_structure) {
         for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
-            uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get();
+            uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get_ptr();
             Elf64_Phdr phdr;
             std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
             if (phdr.p_type == PT_LOAD) {
@@ -1041,7 +1042,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
-    PDE *page_tables = (PDE *)page_tables_alloc.get();
+    PDE *page_tables = (PDE *)page_tables_alloc.get_ptr();
 
     // initialise all entries as "not present"
     for (unsigned i = 0; i < 512; i++) {
@@ -1072,7 +1073,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     // 1st level page tables (PML4):
     // Set up three entries to map the first 510GB at each of 0, (high half), and (top - 2GB)
-    uint64_t PDPTaddress = page_tables_alloc.get() + 0x1000;
+    uint64_t PDPTaddress = page_tables_alloc.get_ptr() + 0x1000;
     page_tables[0] = PDE{PDPTaddress | 0x7}; // present, writable, user-accessible
     page_tables[256] = PDE{PDPTaddress | 0x7};
     page_tables[511] = PDE{PDPTaddress | 0x7};
@@ -1219,12 +1220,12 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // Insert memory-map entries for kernel
     if (kernel_alloc) {
         uint64_t kernel_size = kernel_alloc.page_count() * 0x1000u;
-        st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get(), kernel_size);
+        st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get_ptr(), kernel_size);
     }
     else {
         for (auto &alloc : segment_allocs) {
             uint64_t segment_size = alloc.page_count() * 0x1000u;
-            st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES,alloc.get(), segment_size);
+            st2_memmap.insert_entry(stivale2_mmap_type::KERNEL_AND_MODULES, alloc.get_ptr(), segment_size);
         }
     }
 

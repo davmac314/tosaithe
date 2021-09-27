@@ -39,6 +39,7 @@ inline void *locate_protocol(const EFI_GUID &guid)
     return interfacePtr;
 }
 
+// Allocate from the "pool". This is, essentially, malloc.
 inline void *alloc_pool(unsigned size)
 {
     void *allocdBuf;
@@ -49,6 +50,7 @@ inline void *alloc_pool(unsigned size)
     return allocdBuf;
 }
 
+// Return memory to the "pool".
 inline void free_pool(void *buf)
 {
     EBS->FreePool(buf);
@@ -73,19 +75,20 @@ efi_unique_ptr<T> efi_unique_ptr_wrap(T *t)
     return efi_unique_ptr<T>(t);
 }
 
+// deleter for efi_page_alloc
 class efi_page_deleter
 {
 public:
-    using pointer = EFI_PHYSICAL_ADDRESS;
-    UINTN num_pages = 0;
+    using pointer = std::pair<EFI_PHYSICAL_ADDRESS, UINTN>;
 
     void operator()(pointer v)
     {
-        EBS->FreePages(v, num_pages);
+        EBS->FreePages(v.first, v.second);
     }
 };
 
-// Owned page allocation
+// Owned page allocation. This is a unique_ptr implementation (in fact, subclass) for page allocations.
+// It tracks both the address and size of the allocation.
 class efi_page_alloc : public std::unique_ptr<void, efi_page_deleter>
 {
 public:
@@ -107,8 +110,7 @@ public:
             return false;
         }
 
-        reset(address);
-        get_deleter().num_pages = num_pages;
+        reset(std::make_pair(address, num_pages));
         return true;
     }
 
@@ -124,8 +126,7 @@ public:
             return false;
         }
 
-        reset(address);
-        get_deleter().num_pages = num_pages;
+        reset(std::make_pair(address, num_pages));
         return true;
     }
 
@@ -133,11 +134,11 @@ public:
     void rezone(EFI_PHYSICAL_ADDRESS address, UINTN num_pages) noexcept
     {
         release();
-        reset(address);
-        get_deleter().num_pages = num_pages;
+        reset(std::make_pair(address, num_pages));
     }
 
-    UINTN page_count() const noexcept { return get_deleter().num_pages; }
+    UINTN page_count() const noexcept { return get().second; }
+    EFI_PHYSICAL_ADDRESS get_ptr() const noexcept { return get().first; }
 };
 
 inline void con_write(const CHAR16 *str)
