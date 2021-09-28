@@ -205,8 +205,9 @@ struct GDT_entry_reg {
     // Final byte
     uint8_t base_24_31;
 
-    // Constructor with a standard set of parameters. Will create a maximally-sized segment (0
-    // base, 0xFF...FF limit) and DPL=0 (i.e. highest privilege level).
+    // Constructor with a standard set of parameters. Will create an entry with the specified
+    // base and limit, type, bit size (16/32/64), and with DPL=0 (i.e. highest privilege level).
+    // If g4k_limit is true, the specified limit is adjusted (real_limit = (limit+1) * 4096 - 1).
     constexpr GDT_entry_reg(uint32_t base, uint32_t limit, bool g4k_limit,
             uint16_t entry_type_p, dt_size_t size_p) :
         limit_0_15(limit & 0xFFFFu),
@@ -225,8 +226,9 @@ struct GDT_entry_reg {
     {
     }
 
-    // Constructor with a standard set of parameters, and a specified privilege level. Segment
-    // will be maximally sized (0 base, 0xFF....FF limit).
+    // Constructor with a standard set of parameters. Will create an entry with the specified
+    // base and limit, type, bit size (16/32/64), and DPL (privilege level).
+    // If g4k_limit is true, the specified limit is adjusted (real_limit = (limit+1) * 4096 - 1).
     constexpr GDT_entry_reg(uint32_t base, uint32_t limit, bool g4k_limit,
             uint16_t entry_type_p, dt_size_t size_p, uint8_t dpl_p) :
         limit_0_15(limit & 0xFFFFu),
@@ -323,6 +325,11 @@ DT_entry GDT_table[] = {
         cons_DT_data32_descriptor(),
 };
 
+const CHAR16 * const OPEN_KERNEL_ERR_FIRMWARE = L"unexpected firmware error";
+const CHAR16 * const OPEN_KERNEL_ERR_VOLUME = L"cannot open volume";
+const CHAR16 * const OPEN_KERNEL_ERR_FILEOPEN = L"cannot open file";
+
+// Open a kernel file for reading.
 static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
         EFI_FILE_PROTOCOL **kernel_file_p, UINTN *kernel_file_size_p)
 {
@@ -332,73 +339,77 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
     // status must be EFI_SUCCESS?
     (void)status;
 
-    EFI_DEVICE_PATH_PROTOCOL *image_device_path = nullptr;
-    if (EBS->HandleProtocol(image_handle, &EFI_loaded_image_device_path_protocol_guid,
-            (void **)&image_device_path) != EFI_SUCCESS) {
-        con_write(L"Image does not support loaded-image device path protocol.\r\n");
-        return false;
+    const CHAR16 * errmsg = nullptr;
+
+    {
+        EFI_DEVICE_PATH_PROTOCOL *image_device_path = nullptr;
+        if (EBS->HandleProtocol(image_handle, &EFI_loaded_image_device_path_protocol_guid,
+                (void **)&image_device_path) != EFI_SUCCESS) {
+            // this support is mandatory...
+            errmsg = OPEN_KERNEL_ERR_FIRMWARE; goto error_out;
+        }
+
+        if (image_device_path == nullptr) {
+            errmsg = OPEN_KERNEL_ERR_FIRMWARE; goto error_out;
+        }
+
+        unsigned exec_path_size = (strlen(exec_path) + 1) * sizeof(CHAR16);
+        efi_unique_ptr<EFI_DEVICE_PATH_PROTOCOL> kernel_path
+                { switch_path(image_device_path, exec_path, exec_path_size) };
+        if (kernel_path == nullptr) {
+            return false;
+        }
+
+        // Try to load the kernel now
+        EFI_HANDLE loadDevice;
+
+        auto *remaining_path = kernel_path.get();
+        status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &remaining_path, &loadDevice);
+        kernel_path = nullptr;
+        if (EFI_ERROR(status)) {
+            errmsg = OPEN_KERNEL_ERR_FIRMWARE; goto error_out;
+        }
+
+        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfs_protocol = nullptr;
+
+        status = EBS->HandleProtocol(loadDevice, &EFI_simple_file_system_protocol_guid,
+                (void **)&sfs_protocol);
+        if (EFI_ERROR(status) || (sfs_protocol == nullptr /* firmware misbehaving */)) {
+            errmsg = OPEN_KERNEL_ERR_FIRMWARE; goto error_out;
+        }
+
+        EFI_FILE_PROTOCOL *fs_root = nullptr;
+        status = sfs_protocol->OpenVolume(sfs_protocol, &fs_root);
+        if (EFI_ERROR(status) || (fs_root == nullptr /* firmware misbehaving */)) {
+            errmsg = OPEN_KERNEL_ERR_VOLUME; goto error_out;
+        }
+
+        EFI_FILE_PROTOCOL *kernel_file = nullptr;
+        status = fs_root->Open(fs_root, &kernel_file, exec_path, EFI_FILE_MODE_READ, 0);
+        fs_root->Close(fs_root);
+        if (EFI_ERROR(status) || kernel_file == nullptr) {
+            errmsg = OPEN_KERNEL_ERR_FILEOPEN; goto error_out;
+        }
+
+        EFI_FILE_INFO *kernel_file_info = get_file_info(kernel_file);
+        if (kernel_file_info == nullptr) {
+            kernel_file->Close(kernel_file);
+            errmsg = OPEN_KERNEL_ERR_FILEOPEN; goto error_out;
+        }
+
+        UINTN kernel_file_size = kernel_file_info->FileSize;
+        free_pool(kernel_file_info);
+
+        *kernel_file_p = kernel_file;
+        *kernel_file_size_p = kernel_file_size;
+        return true;
     }
 
-    if (image_device_path == nullptr) {
-        con_write(L"Firmware misbehaved; don't have loaded image device path.\r\n");
-        return false;
-    }
-
-    unsigned exec_path_size = (strlen(exec_path) + 1) * sizeof(CHAR16);
-    efi_unique_ptr<EFI_DEVICE_PATH_PROTOCOL> kernel_path
-            { switch_path(image_device_path, exec_path, exec_path_size) };
-    if (kernel_path == nullptr) {
-        return false;
-    }
-
-    // Try to load the kernel now
-    EFI_HANDLE loadDevice;
-
-    auto *remaining_path = kernel_path.get();
-    status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &remaining_path, &loadDevice);
-    kernel_path = nullptr;
-    if (EFI_ERROR(status)) {
-        con_write(L"Couldn't get file system protocol for kernel path\r\n");
-        return false;
-    }
-
-    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfs_protocol = nullptr;
-
-    status = EBS->HandleProtocol(loadDevice, &EFI_simple_file_system_protocol_guid,
-            (void **)&sfs_protocol);
-    if (EFI_ERROR(status) || (sfs_protocol == nullptr /* firmware misbehaving */)) {
-        con_write(L"Couldn't get file system protocol for kernel path\r\n");
-        return false;
-    }
-
-    EFI_FILE_PROTOCOL *fs_root = nullptr;
-    status = sfs_protocol->OpenVolume(sfs_protocol, &fs_root);
-    if (EFI_ERROR(status) || (fs_root == nullptr /* firmware misbehaving */)) {
-        con_write(L"Couldn't open volume (fs protocol)\r\n");
-        return false;
-    }
-
-    EFI_FILE_PROTOCOL *kernel_file = nullptr;
-    status = fs_root->Open(fs_root, &kernel_file, exec_path, EFI_FILE_MODE_READ, 0);
-    fs_root->Close(fs_root);
-    if (EFI_ERROR(status) || kernel_file == nullptr) {
-        con_write(L"Couldn't open kernel file\r\n");
-        return false;
-    }
-
-    EFI_FILE_INFO *kernel_file_info = get_file_info(kernel_file);
-    if (kernel_file_info == nullptr) {
-        kernel_file->Close(kernel_file);
-        con_write(L"Couldn't get kernel file size\r\n");
-        return false;
-    }
-
-    UINTN kernel_file_size = kernel_file_info->FileSize;
-    free_pool(kernel_file_info);
-
-    *kernel_file_p = kernel_file;
-    *kernel_file_size_p = kernel_file_size;
-    return true;
+error_out:
+    con_write(L"Error loading kernel: ");
+    con_write(OPEN_KERNEL_ERR_FIRMWARE);
+    con_write(L".\r\n");
+    return false;
 }
 
 static void check_framebuffer(stivale2_framebuffer_info *fbinfo, uint64_t *fb_size)
@@ -501,6 +512,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 {
     EFI_FILE_PROTOCOL *kernel_file__;
     UINTN kernel_file_size;
+    con_write(L"*** opening file\r\n"); // XXX
     if (!open_kernel_file(ImageHandle, exec_path, &kernel_file__, &kernel_file_size)) {
         return EFI_LOAD_ERROR;
     }
@@ -513,6 +525,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // headers, we know where the file should end up, at which point we'll allocate space, relocate
     // what we've already read, and read the rest.
 
+    con_write(L"*** reading chunk\r\n"); // XXX
     // Try to read in chunks of at least 128kb:
     UINTN min_read_chunk = 128*1024u;
 
@@ -528,8 +541,13 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         }
     }
 
+    con_write(L"kernel_handle.get() = "); con_write_hex((uintptr_t) kernel_handle.get()); con_write(L"\r\n"); // XXX
+    con_write(L"kernel_alloc.get_ptr() = "); con_write_hex((uintptr_t) kernel_alloc.get_ptr()); con_write(L"\r\n"); // XXX
     UINTN read_amount = first_chunk;
-    EFI_STATUS status = kernel_handle.read(&read_amount, (void *)kernel_alloc.get_ptr());
+    con_write(L"*** kernel_handle.read()\r\n"); // XXX
+    //EFI_STATUS status = kernel_handle.read(&read_amount, (void *)kernel_alloc.get_ptr());
+    EFI_STATUS status = kernel_file__->Read(kernel_file__, &read_amount, (void *)kernel_alloc.get_ptr());
+    con_write(L"*** kernel_handle.read() returned\r\n"); // XXX
 
     if (EFI_ERROR(status)) {
         con_write(L"Couldn't read kernel file; ");
@@ -609,6 +627,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         return EFI_LOAD_ERROR;
     }
 
+    con_write(L"*** expand chunk if necessary\r\n"); // XXX
     // Do we need to expand the chunk read? (Typically we won't, the program headers tend to follow
     // immediately after the ELF header. But, we'll allow for the other case).
 
@@ -671,6 +690,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     unsigned num_loadable_segs = 0;
 
+    con_write(L"*** check p headers\r\n"); // XXX
     for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
         uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get_ptr();
         Elf64_Phdr phdr;
