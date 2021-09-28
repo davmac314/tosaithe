@@ -45,29 +45,28 @@ class tosaithe_stivale2_memmap {
     }
 
 public:
-    bool allocate(uint32_t capacity_p) noexcept
+    void allocate(uint32_t capacity_p)
     {
         uint32_t req_size = sizeof(stivale2_memmap_info)
                 + sizeof(stivale2_mmap_entry) * capacity_p;
         st2_memmap = (stivale2_memmap_info *) alloc_pool(req_size);
         if (st2_memmap == nullptr) {
-            return false;
+            throw std::bad_alloc();
         }
         new(st2_memmap) stivale2_memmap_info();
         st2_memmap->tag.identifier = STIVALE2_LT_MMAP_TAGID;
         st2_memmap->tag.next = nullptr;
         st2_memmap->entries = 0;
         capacity = capacity_p;
-        return true;
     }
 
-    bool add_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length) noexcept
+    void add_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length)
     {
         auto entries = st2_memmap->entries;
 
         if (st2_memmap->entries == capacity) {
             if (!increase_capacity()) {
-                return false;
+                throw std::bad_alloc();
             }
         }
 
@@ -77,14 +76,12 @@ public:
         st2_memmap->memmap[entries].length = length;
         st2_memmap->memmap[entries].unused = 0;
         st2_memmap->entries++;
-
-        return true;
     }
 
     // Insert an entry into the map. Any existing entries which are overlapped by the new entry are
     // trimmed (or removed in the case of total overlap).
-    // On failure, throws std::bad_alloc.
-    // On success: beware, map may require sorting
+    // On failure, throws std::bad_alloc (map may be invalid)
+    // On success: map may require sorting
     void insert_entry(stivale2_mmap_type type_p, uint64_t physaddr, uint64_t length)
     {
         auto &entries = st2_memmap->entries;
@@ -117,9 +114,7 @@ public:
                 else {
                     // split
                     uint64_t newlen = ent_end - physend;
-                    if (!add_entry(st2_memmap->memmap[i].type, physend, newlen)) {
-                        throw std::bad_alloc();
-                    }
+                    add_entry(st2_memmap->memmap[i].type, physend, newlen);
                     ent_len = physaddr - ent_base;
                     st2_memmap->memmap[i].length = ent_len;
                 }
@@ -127,9 +122,7 @@ public:
         }
 
         // Finally add the new entry:
-        if (!add_entry(type_p, physaddr, length)) {
-            throw std::bad_alloc();
-        }
+        add_entry(type_p, physaddr, length);
     }
 
     void sort() noexcept
@@ -329,7 +322,8 @@ const CHAR16 * const OPEN_KERNEL_ERR_FIRMWARE = L"unexpected firmware error";
 const CHAR16 * const OPEN_KERNEL_ERR_VOLUME = L"cannot open volume";
 const CHAR16 * const OPEN_KERNEL_ERR_FILEOPEN = L"cannot open file";
 
-// Open a kernel file for reading.
+// Open a kernel file for reading, return true if successful.
+// Throws: std::bad_alloc
 static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
         EFI_FILE_PROTOCOL **kernel_file_p, UINTN *kernel_file_size_p)
 {
@@ -339,7 +333,7 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
     // status must be EFI_SUCCESS?
     (void)status;
 
-    const CHAR16 * errmsg = nullptr;
+    const CHAR16 * errmsg;
 
     {
         EFI_DEVICE_PATH_PROTOCOL *image_device_path = nullptr;
@@ -356,9 +350,6 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
         unsigned exec_path_size = (strlen(exec_path) + 1) * sizeof(CHAR16);
         efi_unique_ptr<EFI_DEVICE_PATH_PROTOCOL> kernel_path
                 { switch_path(image_device_path, exec_path, exec_path_size) };
-        if (kernel_path == nullptr) {
-            return false;
-        }
 
         // Try to load the kernel now
         EFI_HANDLE loadDevice;
@@ -384,30 +375,34 @@ static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
             errmsg = OPEN_KERNEL_ERR_VOLUME; goto error_out;
         }
 
-        EFI_FILE_PROTOCOL *kernel_file = nullptr;
-        status = fs_root->Open(fs_root, &kernel_file, exec_path, EFI_FILE_MODE_READ, 0);
-        fs_root->Close(fs_root);
-        if (EFI_ERROR(status) || kernel_file == nullptr) {
-            errmsg = OPEN_KERNEL_ERR_FILEOPEN; goto error_out;
+        efi_file_handle kernel_file_hndl;
+        {
+            EFI_FILE_PROTOCOL *kernel_file = nullptr;
+            status = fs_root->Open(fs_root, &kernel_file, exec_path, EFI_FILE_MODE_READ, 0);
+            fs_root->Close(fs_root);
+            if (EFI_ERROR(status) || kernel_file == nullptr) {
+                errmsg = OPEN_KERNEL_ERR_FILEOPEN; goto error_out;
+            }
+
+            kernel_file_hndl.reset(kernel_file);
         }
 
-        EFI_FILE_INFO *kernel_file_info = get_file_info(kernel_file);
+        EFI_FILE_INFO *kernel_file_info = get_file_info(kernel_file_hndl.get());
         if (kernel_file_info == nullptr) {
-            kernel_file->Close(kernel_file);
             errmsg = OPEN_KERNEL_ERR_FILEOPEN; goto error_out;
         }
 
         UINTN kernel_file_size = kernel_file_info->FileSize;
         free_pool(kernel_file_info);
 
-        *kernel_file_p = kernel_file;
+        *kernel_file_p = kernel_file_hndl.release();
         *kernel_file_size_p = kernel_file_size;
         return true;
     }
 
 error_out:
     con_write(L"Error loading kernel: ");
-    con_write(OPEN_KERNEL_ERR_FIRMWARE);
+    con_write(errmsg);
     con_write(L".\r\n");
     return false;
 }
@@ -510,14 +505,15 @@ static void check_framebuffer(stivale2_framebuffer_info *fbinfo, uint64_t *fb_si
 
 EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine)
 {
-    EFI_FILE_PROTOCOL *kernel_file__;
+    efi_file_handle kernel_handle;
     UINTN kernel_file_size;
-    con_write(L"*** opening file\r\n"); // XXX
-    if (!open_kernel_file(ImageHandle, exec_path, &kernel_file__, &kernel_file_size)) {
-        return EFI_LOAD_ERROR;
+    {
+        EFI_FILE_PROTOCOL *kernel_file;
+        if (!open_kernel_file(ImageHandle, exec_path, &kernel_file, &kernel_file_size)) {
+            return EFI_LOAD_ERROR;
+        }
+        kernel_handle.reset(kernel_file);
     }
-    auto kernel_handle = efi_file_handle(kernel_file__);
-    // TODO wrap kernel_file in an owning object
 
     // Allocate space for kernel file
     // For now we'll load a portion at an arbitrary address. We'll allocate 128kb and read at most
@@ -525,32 +521,19 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // headers, we know where the file should end up, at which point we'll allocate space, relocate
     // what we've already read, and read the rest.
 
-    con_write(L"*** reading chunk\r\n"); // XXX
     // Try to read in chunks of at least 128kb:
     UINTN min_read_chunk = 128*1024u;
 
     efi_page_alloc kernel_alloc;
     UINTN first_chunk = std::min(min_read_chunk, kernel_file_size);
 
-    {
-        UINTN kernel_pages = (first_chunk + 0xFFFu)/0x1000u;
+    kernel_alloc.allocate((first_chunk + 0xFFFu)/0x1000u);
 
-        if (!kernel_alloc.allocate_nx(kernel_pages)) {
-            con_write(L"Couldn't allocate kernel memory\r\n");
-            return EFI_LOAD_ERROR;
-        }
-    }
-
-    con_write(L"kernel_handle.get() = "); con_write_hex((uintptr_t) kernel_handle.get()); con_write(L"\r\n"); // XXX
-    con_write(L"kernel_alloc.get_ptr() = "); con_write_hex((uintptr_t) kernel_alloc.get_ptr()); con_write(L"\r\n"); // XXX
     UINTN read_amount = first_chunk;
-    con_write(L"*** kernel_handle.read()\r\n"); // XXX
-    //EFI_STATUS status = kernel_handle.read(&read_amount, (void *)kernel_alloc.get_ptr());
-    EFI_STATUS status = kernel_file__->Read(kernel_file__, &read_amount, (void *)kernel_alloc.get_ptr());
-    con_write(L"*** kernel_handle.read() returned\r\n"); // XXX
+    EFI_STATUS status = kernel_handle.read(&read_amount, (void *)kernel_alloc.get_ptr());
 
     if (EFI_ERROR(status)) {
-        con_write(L"Couldn't read kernel file; ");
+        con_write(L"Error: couldn't read kernel file; ");
         if (status == EFI_NO_MEDIA) {
             con_write(L"status: NO_MEDIA\r\n");
         }
@@ -564,7 +547,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             con_write(L"status: BUFFER_TOO_SMALL\r\n");
         }
         else {
-            con_write(L"status not recognized, misbehaving firmware?\r\n");
+            con_write(L"status not recognized\r\n");
             CHAR16 errcode[3];
             errcode[2] = 0;
             errcode[1] = hexdigit(status & 0xFu);
@@ -580,7 +563,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     // check e_ident
     if (std::char_traits<char>::compare((const char *)elf_hdr->e_ident, ELFMAGIC, 4) != 0) {
-        con_write(L"Incorrect ELF header, not a valid ELF file\r\n");
+        con_write(L"Error: incorrect ELF header, not a valid ELF file\r\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -600,10 +583,9 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     unsigned elf_data_enc = elf_hdr->e_ident[EI_DATA];
     if (elf_data_enc != ELFDATA2LSB /* && elf_data_enc != ELFDATA2MSB */) {
         con_write(L"Unsupported ELF data encoding\r\n");
+        // TODO support non-native encoding?
         return EFI_LOAD_ERROR;
     }
-
-    // TODO actually support non-native encoding?
 
     if (elf_hdr->e_machine != EM_X86_64) {
         con_write(L"Wrong or unsupported ELF machine type\r\n");
@@ -623,11 +605,10 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // sanity check program headers
     if (elf_ph_off >= kernel_file_size
             || ((kernel_file_size - elf_ph_off) / elf_ph_ent_size) < elf_ph_ent_num) {
-        con_write(L"Bad ELF structure\r\n");
+        con_write(L"Error: bad ELF structure\r\n");
         return EFI_LOAD_ERROR;
     }
 
-    con_write(L"*** expand chunk if necessary\r\n"); // XXX
     // Do we need to expand the chunk read? (Typically we won't, the program headers tend to follow
     // immediately after the ELF header. But, we'll allow for the other case).
 
@@ -642,15 +623,15 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         UINTN alloc_pages = (read_amount + 0xFFFu) / 0x1000u;
         status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, alloc_pages, &kernel_current_limit);
         if (EFI_ERROR(status)) {
-            con_write(L"Couldn't allocate kernel memory\r\n");
-            return EFI_LOAD_ERROR;
+            // TODO relocate.
+            throw std::bad_alloc();
         }
 
         kernel_alloc.rezone(kernel_alloc.get_ptr(), kernel_alloc.page_count() + alloc_pages);
 
         status = kernel_handle.read(&read_amount, (void *)(kernel_alloc.get_ptr() + first_chunk));
         if (EFI_ERROR(status)) {
-            con_write(L"Couldn't read kernel file\r\n");
+            con_write(L"Error: couldn't read kernel file\r\n");
             return EFI_LOAD_ERROR;
         }
 
@@ -690,7 +671,6 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     unsigned num_loadable_segs = 0;
 
-    con_write(L"*** check p headers\r\n"); // XXX
     for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
         uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get_ptr();
         Elf64_Phdr phdr;
@@ -702,12 +682,12 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             if (phdr.p_vaddr > 0x8000000000000000u && phdr.p_vaddr < high_half_addr) {
                 // Address in the high-half, but not in the "special" region (-2GB -- 0). Stivale2
                 // doesn't support this (though it's not explicitly forbidden).
-                con_write(L"Unsupported ELF structure\r\n");
+                con_write(L"Error: unsupported ELF structure\r\n");
                 return EFI_LOAD_ERROR;
             }
 
             if (phdr.p_vaddr + phdr.p_memsz < phdr.p_vaddr /* overflow */) {
-                con_write(L"Bad ELF structure\r\n");
+                con_write(L"Error: bad ELF structure\r\n");
                 return EFI_LOAD_ERROR;
             }
 
@@ -737,7 +717,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     }
 
     if (!found_loadable) {
-        con_write(L"No loadable segments in ELF\r\n");
+        con_write(L"Error: no loadable segments in ELF\r\n");
         return EFI_LOAD_ERROR;
     }
 
@@ -847,74 +827,77 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + kernel_alloc.get_ptr();
             Elf64_Phdr phdr;
             std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
-            if (phdr.p_type == PT_LOAD) {
-                // Align start and end to pages
-                uintptr_t seg_start = adj_vptr(phdr.p_vaddr) & ~(uintptr_t)0xFFFu;
-                uintptr_t seg_end = (adj_vptr(phdr.p_vaddr) + phdr.p_memsz + 0xFFFu) & ~(uintptr_t)0xFFFu;
-                UINTN seg_pages = (seg_end - seg_start) / 0x1000u;
 
-                bool need_seg_alloc = true;
+            if (phdr.p_type != PT_LOAD) {
+                continue;
+            }
 
-                // Check overlap!
-                if (kernel_required_limit > seg_start && kernel_addr < seg_end) {
-                    // There must be overlap.
-                    // First, try to reallocate just past highest_vaddr (i.e. a region which
-                    // definitely overlaps no segments).
-                    efi_page_alloc new_alloc;
-                    uintptr_t new_alloc_start = (highest_vaddr + 0xFFFu) & ~(uintptr_t)0xFFFu;
+            // Align start and end to pages
+            uintptr_t seg_start = adj_vptr(phdr.p_vaddr) & ~(uintptr_t)0xFFFu;
+            uintptr_t seg_end = (adj_vptr(phdr.p_vaddr) + phdr.p_memsz + 0xFFFu) & ~(uintptr_t)0xFFFu;
+            UINTN seg_pages = (seg_end - seg_start) / 0x1000u;
 
-                    if (new_alloc.allocate_nx(new_alloc_start, kernel_req_pages)) {
-                        std::memcpy((void *)highest_vaddr, (void *)kernel_addr,
-                                kernel_alloc.page_count() * 0x1000u);
-                        kernel_alloc = std::move(new_alloc);
-                        kernel_addr = new_alloc_start;
-                        kernel_required_limit = kernel_addr + kernel_req_pages * 0x1000u;
-                    }
-                    else {
-                        // If we can't do that, allocate space around the kernel image so that the
-                        // entire segment area is allocated, then allocate a new space for the kernel
-                        // image (at an arbitrary address).
+            bool need_seg_alloc = true;
 
-                        efi_page_alloc pre_alloc;
-                        efi_page_alloc post_alloc;
-                        if (seg_start < kernel_addr) {
-                            pre_alloc.allocate(seg_start, (kernel_addr - seg_start) / 0x1000u);
-                        }
-                        if (kernel_required_limit < seg_end) {
-                            post_alloc.allocate(kernel_required_limit, (seg_end - kernel_required_limit)
-                                    / 0x1000u);
-                        }
+            // Check overlap!
+            if (kernel_required_limit > seg_start && kernel_addr < seg_end) {
+                // There must be overlap.
+                // First, try to reallocate just past highest_vaddr (i.e. a region which
+                // definitely overlaps no segments).
+                efi_page_alloc new_alloc;
+                uintptr_t new_alloc_start = (highest_vaddr + 0xFFFu) & ~(uintptr_t)0xFFFu;
 
-                        new_alloc.allocate(kernel_req_pages);
-                        std::memcpy((void *)new_alloc.get_ptr(), (void *)kernel_addr,
-                                kernel_alloc.page_count() * 0x1000u);
-
-                        // Now free any part of the original allocation which doesn't overlap segment
-                        if (kernel_addr < seg_start) {
-                            pre_alloc.rezone(kernel_addr, (seg_start - kernel_addr) / 0x1000u);
-                            pre_alloc.reset();
-                        }
-                        if (seg_end < kernel_required_limit) {
-                            post_alloc.rezone(seg_end, (kernel_required_limit - seg_end) / 0x1000u);
-                            post_alloc.reset();
-                        }
-
-                        // We can now already got a segment allocation
-                        kernel_alloc.rezone(seg_start, seg_pages);
-                        segment_allocs.emplace_back(std::move(kernel_alloc));
-                        need_seg_alloc = false;
-
-                        kernel_alloc = std::move(new_alloc);
-                        kernel_addr = kernel_alloc.get_ptr();
-                        kernel_required_limit = kernel_addr + kernel_req_pages * 0x1000u;
-                    }
+                if (new_alloc.allocate_nx(new_alloc_start, kernel_req_pages)) {
+                    std::memcpy((void *)highest_vaddr, (void *)kernel_addr,
+                            kernel_alloc.page_count() * 0x1000u);
+                    kernel_alloc = std::move(new_alloc);
+                    kernel_addr = new_alloc_start;
+                    kernel_required_limit = kernel_addr + kernel_req_pages * 0x1000u;
                 }
+                else {
+                    // If we can't do that, allocate space around the kernel image so that the
+                    // entire segment area is allocated, then allocate a new space for the kernel
+                    // image (at an arbitrary address).
 
-                if (need_seg_alloc) {
-                    // allocate
-                    auto &seg_alloc = segment_allocs.emplace_back();
-                    seg_alloc.allocate(seg_start, seg_pages);
+                    efi_page_alloc pre_alloc;
+                    efi_page_alloc post_alloc;
+                    if (seg_start < kernel_addr) {
+                        pre_alloc.allocate(seg_start, (kernel_addr - seg_start) / 0x1000u);
+                    }
+                    if (kernel_required_limit < seg_end) {
+                        post_alloc.allocate(kernel_required_limit, (seg_end - kernel_required_limit)
+                                / 0x1000u);
+                    }
+
+                    new_alloc.allocate(kernel_req_pages);
+                    std::memcpy((void *)new_alloc.get_ptr(), (void *)kernel_addr,
+                            kernel_alloc.page_count() * 0x1000u);
+
+                    // Now free any part of the original allocation which doesn't overlap segment
+                    if (kernel_addr < seg_start) {
+                        pre_alloc.rezone(kernel_addr, (seg_start - kernel_addr) / 0x1000u);
+                        pre_alloc.reset();
+                    }
+                    if (seg_end < kernel_required_limit) {
+                        post_alloc.rezone(seg_end, (kernel_required_limit - seg_end) / 0x1000u);
+                        post_alloc.reset();
+                    }
+
+                    // We can now already got a segment allocation
+                    kernel_alloc.rezone(seg_start, seg_pages);
+                    segment_allocs.emplace_back(std::move(kernel_alloc));
+                    need_seg_alloc = false;
+
+                    kernel_alloc = std::move(new_alloc);
+                    kernel_addr = kernel_alloc.get_ptr();
+                    kernel_required_limit = kernel_addr + kernel_req_pages * 0x1000u;
                 }
+            }
+
+            if (need_seg_alloc) {
+                // allocate
+                auto &seg_alloc = segment_allocs.emplace_back();
+                seg_alloc.allocate(seg_start, seg_pages);
             }
         }
 
@@ -935,7 +918,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     if (read_amount > 0) {
         status = kernel_handle.read(&read_amount, (void *)kernel_current_limit);
         if (EFI_ERROR(status)) {
-            con_write(L"Couldn't read kernel file\r\n");
+            con_write(L"Error: couldn't read kernel file\r\n");
             return EFI_LOAD_ERROR;
         }
     }
@@ -1042,10 +1025,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     // Allocate memory for page tables
 
     efi_page_alloc page_tables_alloc;
-    if (!page_tables_alloc.allocate_nx(2)) {
-        con_write(L"*** Memory allocation failed ***\r\n");
-        return EFI_LOAD_ERROR;
-    }
+    page_tables_alloc.allocate(2);
 
     PDE *page_tables = (PDE *)page_tables_alloc.get_ptr();
 
@@ -1116,10 +1096,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
 
     // Allocate Stivale2 memmap
     tosaithe_stivale2_memmap st2_memmap;
-    if (!st2_memmap.allocate(64)) { // hopefully big enough
-        con_write(L"*** Memory allocation failed ***\r\n");
-        return EFI_LOAD_ERROR;
-    }
+    st2_memmap.allocate(64); // hopefully big enough
 
     retrieve_efi_memmap:
 
@@ -1139,8 +1116,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
         EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
 
         if (efiMemMap == nullptr) {
-            con_write(L"*** Memory allocation failed ***\r\n");
-            return EFI_LOAD_ERROR;
+            throw std::bad_alloc();
         }
 
         status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
@@ -1149,8 +1125,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
             free_pool(efiMemMap);
             efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
             if (efiMemMap == nullptr) {
-                con_write(L"*** Memory allocation failed ***\r\n");
-                return EFI_LOAD_ERROR;
+                throw std::bad_alloc();
             }
             status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
         }
@@ -1280,7 +1255,7 @@ EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const 
     );
 
     if (cr4flags & 0x1000) {
-        con_write(L"Uh-oh, LA57 was enabled by firmware :(\r\n");  // TODO
+        con_write(L"Error: LA57 was enabled by firmware\r\n");  // TODO
         return EFI_LOAD_ERROR;
     }
 

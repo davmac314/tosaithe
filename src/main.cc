@@ -91,9 +91,10 @@ void *load_entire_file(EFI_DEVICE_PATH_PROTOCOL *dev_path, UINTN *buf_size_ptr)
         }
     }
 
+    efi_file_handle file_to_load_hndl { file_to_load };
+
     EFI_FILE_INFO *load_file_info = get_file_info(file_to_load);
     if (load_file_info == nullptr) {
-        file_to_load->Close(file_to_load);
         throw load_file_exception(load_file_exception::CANNOT_GET_FILE_SIZE, status);
     }
 
@@ -102,12 +103,10 @@ void *load_entire_file(EFI_DEVICE_PATH_PROTOCOL *dev_path, UINTN *buf_size_ptr)
 
     void *load_address = alloc_pool(read_amount);
     if (load_address == nullptr) {
-        file_to_load->Close(file_to_load);
         throw std::bad_alloc();
     }
 
-    status = file_to_load->Read(file_to_load, &read_amount, load_address);
-    file_to_load->Close(file_to_load);
+    status = file_to_load_hndl.read(&read_amount, load_address);
     if (EFI_ERROR(status)) {
         free_pool(load_address);
         throw load_file_exception(load_file_exception::CANNOT_READ_FILE, status);
@@ -521,12 +520,17 @@ EfiMain (
         }
         const menu_entry &entry = menu[index];
 
-        if (entry.entry_type == menu_entry::CHAIN) {
-            return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
-        } else if (entry.entry_type == menu_entry::LINUX_CHAIN) {
-            return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
-        } else {
-            return load_stivale2(ImageHandle, L"\\badux.elf", L"");
+        try {
+            if (entry.entry_type == menu_entry::CHAIN) {
+                return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+            } else if (entry.entry_type == menu_entry::LINUX_CHAIN) {
+                return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+            } else {
+                return load_stivale2(ImageHandle, L"\\badux.elf", L"");
+            }
+        }
+        catch (std::bad_alloc &b) {
+            con_write(L"Error: not enough memory.\r\n");
         }
     }
     else {

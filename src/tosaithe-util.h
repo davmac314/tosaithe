@@ -159,7 +159,7 @@ class efi_file_handle : public std::unique_ptr<void, efi_file_closer>
 public:
     using unique_ptr::unique_ptr;
 
-    EFI_STATUS read(UINTN *read_amount, void *addr)
+    EFI_STATUS read(UINTN *read_amount, void *addr) noexcept
     {
         auto fd = get();
         return fd->Read(fd, read_amount, addr);
@@ -270,12 +270,13 @@ inline unsigned find_file_path(const EFI_DEVICE_PATH_PROTOCOL *dp)
     return -1;
 }
 
-// Switch out the file path part in a device path for another file path. Writes error message
-// and returns null on failure. Returned path should be freed via freePool(...).
+// Switch out the file path part in a device path for another file path.
+// Returned path should be freed via freePool(...).
 // Params:
 //   dp - original device path
 //   new_path - the new file path, with null terminator
 //   new_path_len - length in *bytes*, includes null terminator
+// Throws: std::bad_alloc
 inline EFI_DEVICE_PATH_PROTOCOL *switch_path(const EFI_DEVICE_PATH_PROTOCOL *dp,
         const CHAR16 *new_path, unsigned new_path_len)
 {
@@ -285,8 +286,7 @@ inline EFI_DEVICE_PATH_PROTOCOL *switch_path(const EFI_DEVICE_PATH_PROTOCOL *dp,
 
     unsigned char *allocdBuf = (unsigned char *) alloc_pool(req_size);
     if (allocdBuf == nullptr) {
-        con_write(L"*** Pool allocation failed ***\r\n");
-        return nullptr;
+        throw std::bad_alloc();
     }
 
     // Copy source up to path_offs
@@ -316,6 +316,7 @@ inline EFI_DEVICE_PATH_PROTOCOL *switch_path(const EFI_DEVICE_PATH_PROTOCOL *dp,
     return (EFI_DEVICE_PATH_PROTOCOL *)allocdBuf;
 }
 
+// Get file info. May throw std::bad_alloc.
 inline EFI_FILE_INFO *get_file_info(EFI_FILE_PROTOCOL *file)
 {
     UINTN bufferSize = 128;
@@ -330,7 +331,7 @@ inline EFI_FILE_INFO *get_file_info(EFI_FILE_PROTOCOL *file)
         // bufferSize has now been updated:
         buffer = (EFI_FILE_INFO *) alloc_pool(bufferSize);
         if (buffer == nullptr) {
-            return nullptr;
+            throw std::bad_alloc();
         }
 
         status = file->GetInfo(file, &EFI_file_info_id, &bufferSize, buffer);
