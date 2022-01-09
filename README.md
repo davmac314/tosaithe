@@ -30,13 +30,14 @@ For Stivale2, only 64-bit ELF kernels are supported, and most optional features 
 supported but pointers in the information tags given to the kernel will not be adjusted to the high
 half. 
 
-Position independence is not supported (the kernel will be loaded at its nominal address).
+Relocation is not supported (the kernel will be loaded at its nominal address, even if it has
+relocations).
 
 The Stivale2 requirement that PIC and APIC IRQs are disabled is not currently implemented. The
 kernel should ensure IRQs are masked itself before enabling interrupts.
 
 No text mode is available in UEFI. The kernel will be booted regardless of whether it supports
-support from framebuffer. A framebuffer tag will be provided to the kernel if possible.
+the framebuffer. A framebuffer tag will be provided to the kernel if possible.
 
 ## Building Tosaithe
 
@@ -84,7 +85,7 @@ entry: {
 ```
 
 Note that when chaining to an EFI program (when `type = chain`) the command line should include
-the program name as first argument. Paths are on the boot partition (or rather the partition that
+the program name as first argument. Paths are on the boot partition (or rather, the partition that
 Tosaithe itself is run from).
 
 ## Using Tosaithe

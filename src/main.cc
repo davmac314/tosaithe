@@ -163,7 +163,7 @@ static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, c
     status = EBS->HandleProtocol(loaded_handle, &EFI_loaded_image_protocol_guid,
             (void **)&chained_image_LIP);
 
-    chained_image_LIP->LoadOptions = const_cast<void *>((const void *)cmdline);
+    chained_image_LIP->LoadOptions = (void *)cmdline;
     chained_image_LIP->LoadOptionsSize = (strlen(cmdline) + 1) * sizeof(CHAR16);
 
     status = EBS->StartImage(loaded_handle, nullptr, nullptr);
