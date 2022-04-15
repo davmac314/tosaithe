@@ -419,6 +419,11 @@ EfiMain (
     con_write(SystemTable->FirmwareVendor);
     con_write(L"\r\n\r\n");
 
+    // for debugging:
+    // EFI_LOADED_IMAGE_PROTOCOL *loadedImage;
+    // EBS->HandleProtocol(ImageHandle, &EFI_loaded_image_protocol_guid, (void **)&loadedImage);
+    // con_write(L"Loaded image base = "); con_write_hex((uint64_t) loadedImage->ImageBase); con_write(L"\r\n\r\n");
+
     auto conf_path = efi_unique_ptr_wrap(resolve_relative_path(ImageHandle, L"\\tosaithe.conf"));
     if (conf_path == nullptr) {
         // An error message should already be out, but let's make it clear why we will abort now:
