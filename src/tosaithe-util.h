@@ -147,7 +147,7 @@ class efi_file_closer
 public:
     using pointer = EFI_FILE_PROTOCOL *;
 
-    void operator()(pointer v)
+    void operator()(pointer v) noexcept
     {
         v->Close(v);
     }
@@ -163,6 +163,12 @@ public:
     {
         auto fd = get();
         return fd->Read(fd, read_amount, addr);
+    }
+
+    EFI_STATUS seek(UINTN position) noexcept
+    {
+        auto fd = get();
+        return fd->SetPosition(fd, position);
     }
 };
 

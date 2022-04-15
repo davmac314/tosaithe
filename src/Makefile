@@ -9,9 +9,9 @@ all: tosaithe.efi
 
 # We have to link twice: the first time as ELF, to produce the .eh_frame_hdr section (--eh-frame-hdr).
 # The second time to convert to PEI.
-tosaithe.efi: main.o stivale2.o cxxsupport.o
+tosaithe.efi: main.o tosaithe-proto.o cxxsupport.o
 	ld -q -nostdlib -Bsymbolic -T link-elf.lds \
-	  main.o stivale2.o cxxsupport.o \
+	  main.o tosaithe-proto.o cxxsupport.o \
 	  --eh-frame-hdr \
 	  -L ../lib -lunwind -lcxxabi -lbmcxx \
 	  -Map=tosaithe.efi.so.map -o tosaithe.efi.so
@@ -23,10 +23,10 @@ tosaithe.efi: main.o stivale2.o cxxsupport.o
 	  --enable-reloc-section
 
 # Alternative linking method: works with lld (ld.lld), but requires elf2efi
-#tosaithe.efi: main.o stivale2.o cxxsupport.o
+#tosaithe.efi: main.o tosaithe-proto.o cxxsupport.o
 #	ld -Map tosaithe.efi.so.map -q -Bsymbolic -Bsymbolic-functions -T link-elf.lds \
 #	  -o tosaithe.efi.so \
-#	  main.o stivale2.o cxxsupport.o \
+#	  main.o tosaithe-proto.o cxxsupport.o \
 #	  --eh-frame-hdr \
 #	  -L ../lib -lunwind -lcxxabi -lbmcxx \
 #	  -Map=tosaithe.efi.so.map -o tosaithe.efi.so
@@ -36,8 +36,8 @@ tosaithe.efi: main.o stivale2.o cxxsupport.o
 main.o: main.cc
 	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c main.cc
 
-stivale2.o: stivale2.cc
-	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c stivale2.cc
+tosaithe-proto.o: tosaithe-proto.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c tosaithe-proto.cc
 
 cxxsupport.o: cxxsupport.cc
 	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c cxxsupport.cc
@@ -77,5 +77,5 @@ run-in-qemu: image-dir
 	  -debugcon file:ovmf-debug.log -global isa-debugcon.iobase=0x402
 
 clean:
-	rm -f main.o stivale2.o tosaithe.efi.so tosaithe.efi disk.img
+	rm -f main.o tosaithe-proto.o tosaithe.efi.so tosaithe.efi disk.img
 	rm -rf image

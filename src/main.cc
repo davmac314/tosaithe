@@ -171,13 +171,13 @@ static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, c
     return status;
 }
 
-EFI_STATUS load_stivale2(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine);
+EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine);
 
 struct menu_entry {
     enum entry_type_t {
         CHAIN,
         LINUX_CHAIN,
-        STIVALE2
+        TOSAITHE
     };
 
     std::wstring description;
@@ -344,8 +344,8 @@ menu_entry parse_entry(std::string_view &conf)
                 else if (value == L"linux_chain") {
                     entry.entry_type = menu_entry::LINUX_CHAIN;
                 }
-                else if (value == L"stivale2") {
-                    entry.entry_type = menu_entry::STIVALE2;
+                else if (value == L"tosaithe") {
+                    entry.entry_type = menu_entry::TOSAITHE;
                 }
                 else {
                     throw parse_exception {msg_unrecognized_entry_type};
@@ -526,7 +526,7 @@ EfiMain (
             } else if (entry.entry_type == menu_entry::LINUX_CHAIN) {
                 return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
             } else {
-                return load_stivale2(ImageHandle, L"\\badux.elf", L"");
+                return load_tsbp(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
             }
         }
         catch (std::bad_alloc &b) {
