@@ -291,24 +291,13 @@ inline constexpr GDT_entry_reg cons_DT_code64_descriptor()
     return GDT_entry_reg(0, 0x000FFFFFu, true, DT_ROCODE, dt_size_t::s64);
 }
 
-// TODO don't need most of this
-// Global descriptor table, for kernel entry, as per Stivale 2 spec
+// Global Descriptor Table for kernel entry
 DT_entry GDT_table[] = {
         {0}, // NULL
 
         // ---- 1 ----
 
-        cons_DT_code16_descriptor(),
-        cons_DT_data16_descriptor(),
-        cons_DT_code32_descriptor(),
-        cons_DT_data32_descriptor(),
-
-        // ---- 5 ----
-
         cons_DT_code64_descriptor(),
-
-        // Stivale says this should be a "64-bit data descriptor". There is no such thing...
-        // A regular 32-bit data descriptor should be fine, the base/limit will be ignored.
         cons_DT_data32_descriptor(),
 };
 
@@ -842,18 +831,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 //        elf_header_alloc.rezone(kernel_page_addr, kernel_pages);
     }
 
-    // FIXME:
 
-    // Read the kernel image, segment at a time.
-    //read_amount = kernel_file_size - first_chunk;
-
-    //if (read_amount > 0) {
-    //    status = kernel_handle.read(&read_amount, (void *)kernel_current_limit);
-    //    if (EFI_ERROR(status)) {
-    //        con_write(L"Error: couldn't read kernel file\r\n");
-    //        return EFI_LOAD_ERROR;
-    //    }
-    //}
+    // Actually load kernel (read from disk into memory).
 
     // TODO if we have first_chunk containing a portion of a segment, copy from the
     // header allocation instead of re-reading.
@@ -900,6 +879,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         memset((void *)(kernel_alloc.get_ptr() + bss.begin_offset - lowest_vaddr), 0, bss.size);
     }
 
+
     // Allocate space for page tables
     // We will use 4-level paging, so we need:
     // A PML4 top-level page directory (4kb)
@@ -931,9 +911,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     //    0xFFFF 8000 0000 0000 <-- lowest "high half" address
     //    0xFFFF FFFF 8000 0000 <-- corresponds to (top - 2GB)
     //
-    // Stivale2 spec says the first of the above is mapped to address 0, with a 4GB mapping "plus
-    // any additional memory map entry", meaning that any memory in the memory map should be
-    // mapped also. We may as well just map as much as possible (and cover, hopefully, all
+    // We may as well just map as much as possible (and cover, hopefully, all
     // available memory).
     //
     // Pagewise:
@@ -941,7 +919,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     //   0xFFFF FFFF 8000 0000 = PML4[511][510]
     //
     // If we use just a single second-level page table (with 1GB pages) we could almost cover
-    // 512GB. However, we need to map the top 2GB back to physical address 0, so we can cover
+    // 512GB. However, we need to map the top 2GB back to physical address 0, and we do this
+    // in the same page table (PML4[0] == PML4[256] == PML4[511]), so we are limited to covering
     // 510GB. TODO - that's a lot, but there could theoretically be more memory than that.
 
     // 1st level page tables (PML4):
@@ -960,6 +939,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     page_tables[512 + 510] = page_tables[512];
     page_tables[512 + 511] = page_tables[513];
 
+
     // Set up loader_data
 
     tosaithe_loader_data loader_data;
@@ -975,6 +955,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     uint64_t fb_size = 0;
     check_framebuffer(&loader_data, &fb_size);
+
 
     // Build tosaithe protocol memory map from EFI memory map
 
@@ -1031,7 +1012,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         return EFI_LOAD_ERROR;
     }
 
-    // Copy entries from EFI memory map to Stivale2 map
+    // Copy entries from EFI memory map our boot protocol map
     auto *efi_mem_iter = efi_memmap_ptr.get();
     auto *efi_mem_end = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_memmap_ptr.get() + memMapSize);
     while (efi_mem_iter < efi_mem_end) {
@@ -1050,8 +1031,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             break;
         case EfiRuntimeServicesCode:
         case EfiRuntimeServicesData:
-            // Stivale2 has no suitable memory type to indicate EFI runtime services use.
-            // If we specify it as USABLE or RECLAIMABLE, runtime services won't be usable.
             st_type = tsbp_mmap_type::RESERVED;
             break;
         case EfiConventionalMemory:
@@ -1201,7 +1180,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     LoadGDT64_struct gdt_desc { uint16_t(sizeof(GDT_table) - 1), GDT_table };
 
-    if (kern_stack_top != 0) {
         asm volatile (
                     "lgdt %0\n"
 
@@ -1210,10 +1188,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
                 // out to be pretty tricky in long mode. But handily, this will load SS:RSP at the
                 // same time.
 
-                    "pushq $0x30\n" // SS
-                    "pushq %1\n"    // RSP
+                    "pushq %[dsseg]\n" // SS
+                    "pushq %1\n"        // RSP
                     "pushfq\n"
-                    "pushq $0x28\n" // CS
+                    "pushq %[csseg]\n" // CS
 
                     // rather than push the target directly, load it relative to RIP. This prevents issues
                     // in the case that we are loaded above 2GB when the push'd value will be sign extended.
@@ -1228,39 +1206,16 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
                 // there's only one: the target address
 
                 "long_jmp_after_gdt_load:\n"
-                    "movl $0x30, %%eax\n"
+                    "movl %[dsseg], %%eax\n"
                     "movl %%eax, %%ds\n"
                     "pushq $0x0\n"  // invalid return address
                     "jmpq %A2"
 
                 :
-                : "m"(gdt_desc), "rm"(kern_stack_top), "r"(kern_entry), "D"(&loader_data)
+                : "m"(gdt_desc), "rm"(kern_stack_top), "r"(kern_entry), "D"(&loader_data),
+                  [csseg] "i"(TOSAITHE_CS_SEG), [dsseg] "i"(TOSAITHE_DS_SEG)
                 : "rax"
         );
-    }
-    else {
-        // In this version, we set RSP to 0:
-        asm volatile (
-                    "lgdt %0\n"
 
-                    "pushq $0x30\n" // SS
-                    "pushq $0x0\n"  // RSP (0x0)
-                    "pushfq\n"
-                    "pushq $0x28\n" // CS
-                    "leaq long_jmp_after_gdt_load2(%%rip), %%rax\n"
-                    "pushq %%rax\n" // RIP
-                    "iretq\n"  // returns to following instruction:
-
-                "long_jmp_after_gdt_load2:\n"
-                    "movl $0x30, %%eax\n"
-                    "movl %%eax, %%ds\n"
-                    "jmpq %A1"
-
-                :
-                : "m"(gdt_desc), "r"(kern_entry), "D"(&loader_data)
-                : "rax"
-        );
-    }
-
-    return EFI_SUCCESS;
+    __builtin_unreachable();
 }
