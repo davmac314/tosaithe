@@ -470,6 +470,7 @@ EfiMain (
 
         con_write(L"Error in tosaithe.conf: ");
         con_write(uu.get_output().c_str());
+        con_write(L"\r\n");
 
         return EFI_LOAD_ERROR;
     }
