@@ -20,6 +20,9 @@ static const uintptr_t PAGE4KB = 0x1000u;
 static const uintptr_t PAGE2MB = 0x200000u;
 static const uintptr_t PAGE1GB = 0x40000000u;
 
+// Top of memory minus 2GB. The kernel virtual address must be within this region.
+static const uintptr_t TOP_MINUS_2GB = 0xFFFFFFFF80000000u;
+
 
 // Class to manage building a tosaithe boot protocol memory map structure
 class tosaithe_memmap {
@@ -821,6 +824,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         return EFI_LOAD_ERROR;
     }
 
+    if (lowest_vaddr < TOP_MINUS_2GB) {
+        con_write(L"Error: unsupported ELF structure\r\n");
+    }
 
     // Allocate space for kernel; we need to ensure sufficient alignment
 
@@ -966,14 +972,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     PDE *page_tables = (PDE *)take_page();
 
-    // iterate through EFI map entries (they are ordered)
-    // combine on the fly if possible, allocate pages as large as possible
-
-    EFI_MEMORY_DESCRIPTOR *mmdesc = efi_memmap_ptr.get();
-    EFI_MEMORY_DESCRIPTOR *mmdesc_end = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapSize);
 
     auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end) {
-        // FIXME may need to split allocated large pages in order to remap over them
+        // FIXME don't assume availability of 1GB pages
 
         uintptr_t virt_phys_diff = virt_addr - phys_addr_beg;
         bool use_1gb_pages = (virt_phys_diff & (PAGE1GB - 1)) == 0;
@@ -1038,9 +1039,23 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
             auto &pdpt_ent = pdpt[(virt_addr >> 30) & 0x1FF];
             if ((pdpt_ent.entry & 0x1) == 0) {
-                // allocate:
-                auto pdpt_page = (uintptr_t)take_page();
-                pdpt_ent.entry = pdpt_page | 3 /* present/read+write */;
+                if ((pdpt_ent.entry & 0x80) != 0) {
+                    // split large page
+                    uintptr_t orig_phys = pdpt_ent.entry & 0x000FFFFFFFFFF000u;
+                    auto page_for_split = (uintptr_t)take_page();
+                    pdpt_ent.entry = page_for_split | 3 /* present/read+write */;
+                    PDE *split_page = (PDE *)page_for_split;
+                    // re-create original mapping, will be partially overwritten shortly
+                    for (int i = 0; i < 512; i++) {
+                        split_page[i] = { orig_phys | 0x80 | 3 };
+                        orig_phys += PAGE2MB;
+                    }
+                }
+                else {
+                    // allocate:
+                    auto pdpt_page = (uintptr_t)take_page();
+                    pdpt_ent.entry = pdpt_page | 3 /* present/read+write */;
+                }
             }
 
             // from pde_ent find the address of the next level:
@@ -1092,9 +1107,23 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
             auto &pdpt_ent = pdpt[(virt_addr >> 30) & 0x1FF];
             if ((pdpt_ent.entry & 0x1) == 0) {
-                // allocate:
-                auto pdpt_page = (uintptr_t)take_page();
-                pdpt_ent.entry = pdpt_page | 3 /* present/read+write */;
+                if ((pdpt_ent.entry & 0x80) != 0) {
+                    // split large page
+                    uintptr_t orig_phys = pdpt_ent.entry & 0x000FFFFFFFFFF000u;
+                    auto page_for_split = (uintptr_t)take_page();
+                    pdpt_ent.entry = page_for_split | 3 /* present/read+write */;
+                    PDE *split_page = (PDE *)page_for_split;
+                    // re-create original mapping, will be partially overwritten shortly
+                    for (int i = 0; i < 512; i++) {
+                        split_page[i] = { orig_phys | 0x80 | 3 };
+                        orig_phys += PAGE2MB;
+                    }
+                }
+                else {
+                    // allocate:
+                    auto pdpt_page = (uintptr_t)take_page();
+                    pdpt_ent.entry = pdpt_page | 3 /* present/read+write */;
+                }
             }
 
             // from pdpt_ent find the address of the next level:
@@ -1107,9 +1136,23 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
             auto &pd_ent = pd[(virt_addr >> 21) & 0x1FF];
             if ((pd_ent.entry & 0x1) == 0) {
-                // allocate:
-                auto pt_page = (uintptr_t)take_page();
-                pd_ent.entry = pt_page | 3 /* present/read+write */;
+                if ((pd_ent.entry & 0x80) != 0) {
+                    // split large page
+                    uintptr_t orig_phys = pd_ent.entry & 0x000FFFFFFFFFF000u;
+                    auto page_for_split = (uintptr_t)take_page();
+                    pd_ent.entry = page_for_split | 3 /* present/read+write */;
+                    PDE *split_page = (PDE *)page_for_split;
+                    // re-create original mapping, will be partially overwritten shortly
+                    for (int i = 0; i < 512; i++) {
+                        split_page[i] = { orig_phys | 0x80 | 3 };
+                        orig_phys += PAGE2MB;
+                    }
+                }
+                else {
+                    // allocate:
+                    auto pt_page = (uintptr_t)take_page();
+                    pd_ent.entry = pt_page | 3 /* present/read+write */;
+                }
             }
 
             // from pd_ent find the address of the page table:
@@ -1147,6 +1190,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     // Map all regions from the EFI memory map.
     // Note that this will exclude framebuffer, Local APIC / IO APIC, probably any device mapping
     // that isn't specific to the system.
+
+    EFI_MEMORY_DESCRIPTOR *mmdesc = efi_memmap_ptr.get();
+    EFI_MEMORY_DESCRIPTOR *mmdesc_end = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapSize);
 
     auto next_mmdesc_from = [&](EFI_MEMORY_DESCRIPTOR *mmdesc) {
         return (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapDescrSize);
