@@ -972,7 +972,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     PDE *page_tables = (PDE *)take_page();
 
-
+    // Create page mapping for a region
     auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end) {
         // FIXME don't assume availability of 1GB pages
 
@@ -980,7 +980,35 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         bool use_1gb_pages = (virt_phys_diff & (PAGE1GB - 1)) == 0;
         bool use_2mb_pages = (virt_phys_diff & (PAGE2MB - 1)) == 0;
 
-        // Now we have a range, how big can we make the pages?
+        // allocate an intermediate page table for a given entry
+        auto allocate_int_pt = [&](PDE &pde_ent, bool split_large, uintptr_t pg_size) {
+            if ((pde_ent.entry & 0x1) != 0) {
+                // intermediate already exists... or is it a large page?
+                if (split_large && (pde_ent.entry & 0x80) != 0) {
+                    // split large page
+                    // FIXME preserve caching attributes
+                    uintptr_t orig_phys = pde_ent.entry & 0x000FFFFFFFFFF000u;
+                    auto page_for_split = (uintptr_t)take_page();
+                    pde_ent.entry = page_for_split | 3 /* present/read+write */;
+                    PDE *split_page = (PDE *)page_for_split;
+                    // re-create original mapping, will be partially overwritten shortly
+                    for (int i = 0; i < 512; i++) {
+                        split_page[i] = { orig_phys | 0x80 | 3 };
+                        orig_phys += pg_size;
+                    }
+                }
+            }
+            else {
+                // nothing in the entry yet. Allocate:
+                auto pdpt_page = (uintptr_t)take_page();
+                pde_ent.entry = pdpt_page | 3 /* present/read+write */;
+            }
+        };
+
+        // The following three blocks of code (if statments) are pretty similar, but each handles
+        // a different page size. For smaller page sizes we have more intermediate levels to deal
+        // with.
+
         if (use_1gb_pages && (phys_addr_beg & (PAGE1GB - 1)) == 0 && (phys_addr_end - phys_addr_beg) >= PAGE1GB) {
             // 1GB pages!
 
@@ -988,16 +1016,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
             // allocate 2nd level page table if needed
             auto &pde_ent = page_tables[(virt_addr >> 39) & 0x1FF];
-            if ((pde_ent.entry & 0x1) == 0) {
-                // allocate:
-                auto pdpt_page = (uintptr_t)take_page();
-                pde_ent.entry = pdpt_page | 3 /* present/read+write */;
-            }
+            allocate_int_pt(pde_ent, false, 0);
 
             // from pde_ent find the address of the next level:
             uintptr_t pdpt_addr = pde_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
-            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
-            //  shouldn't really happen though)
             PDE *pdpt = (PDE *)pdpt_addr;
 
             // set entrie(s) for 1GB page(s)
@@ -1023,47 +1045,19 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
             // allocate 2nd level page table if needed
             auto &pde_ent = page_tables[(virt_addr >> 39) & 0x1FF];
-            if ((pde_ent.entry & 0x1) == 0) {
-                // allocate:
-                auto pdpt_page = (uintptr_t)take_page();
-                pde_ent.entry = pdpt_page | 3 /* present/read+write */;
-            }
+            allocate_int_pt(pde_ent, false, 0);
 
             // from pde_ent find the address of the next level:
             uintptr_t pdpt_addr = pde_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
-            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
-            //  shouldn't really happen though)
             PDE *pdpt = (PDE *)pdpt_addr;
 
             // allocate 3rd level page table if needed
-
             auto &pdpt_ent = pdpt[(virt_addr >> 30) & 0x1FF];
-            if ((pdpt_ent.entry & 0x1) == 0) {
-                if ((pdpt_ent.entry & 0x80) != 0) {
-                    // split large page
-                    uintptr_t orig_phys = pdpt_ent.entry & 0x000FFFFFFFFFF000u;
-                    auto page_for_split = (uintptr_t)take_page();
-                    pdpt_ent.entry = page_for_split | 3 /* present/read+write */;
-                    PDE *split_page = (PDE *)page_for_split;
-                    // re-create original mapping, will be partially overwritten shortly
-                    for (int i = 0; i < 512; i++) {
-                        split_page[i] = { orig_phys | 0x80 | 3 };
-                        orig_phys += PAGE2MB;
-                    }
-                }
-                else {
-                    // allocate:
-                    auto pdpt_page = (uintptr_t)take_page();
-                    pdpt_ent.entry = pdpt_page | 3 /* present/read+write */;
-                }
-            }
+            allocate_int_pt(pdpt_ent, true, PAGE2MB);
 
             // from pde_ent find the address of the next level:
             uintptr_t pd_addr = pdpt_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
-            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
-            //  shouldn't really happen though)
             PDE *pd = (PDE *)pd_addr;
-
 
             // set entrie(s) for 2MB page(s)
             int pd_ind = (virt_addr >> 21) & 0x1FF;
@@ -1091,74 +1085,26 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
             // allocate 2nd level page table if needed
             auto &pde_ent = page_tables[(virt_addr >> 39) & 0x1FF];
-            if ((pde_ent.entry & 0x1) == 0) {
-                // allocate:
-                auto pdpt_page = (uintptr_t)take_page();
-                pde_ent.entry = pdpt_page | 3 /* present/read+write */;
-            }
+            allocate_int_pt(pde_ent, false, 0);
 
             // from pde_ent find the address of the next level:
             uintptr_t pdpt_addr = pde_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
-            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
-            //  shouldn't really happen though)
             PDE *pdpt = (PDE *)pdpt_addr;
 
-            // allocate 3rd level page table (PD) if needed
-
+            // allocate 3rd level page table (PD) if needed:
             auto &pdpt_ent = pdpt[(virt_addr >> 30) & 0x1FF];
-            if ((pdpt_ent.entry & 0x1) == 0) {
-                if ((pdpt_ent.entry & 0x80) != 0) {
-                    // split large page
-                    uintptr_t orig_phys = pdpt_ent.entry & 0x000FFFFFFFFFF000u;
-                    auto page_for_split = (uintptr_t)take_page();
-                    pdpt_ent.entry = page_for_split | 3 /* present/read+write */;
-                    PDE *split_page = (PDE *)page_for_split;
-                    // re-create original mapping, will be partially overwritten shortly
-                    for (int i = 0; i < 512; i++) {
-                        split_page[i] = { orig_phys | 0x80 | 3 };
-                        orig_phys += PAGE2MB;
-                    }
-                }
-                else {
-                    // allocate:
-                    auto pdpt_page = (uintptr_t)take_page();
-                    pdpt_ent.entry = pdpt_page | 3 /* present/read+write */;
-                }
-            }
+            allocate_int_pt(pdpt_ent, true, PAGE2MB);
 
             // from pdpt_ent find the address of the next level:
             uintptr_t pd_addr = pdpt_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
-            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
-            //  shouldn't really happen though)
             PDE *pd = (PDE *)pd_addr;
 
-            // allocate 4th level page table (PT) if needed
-
+            // allocate 4th level page table (PT) if needed:
             auto &pd_ent = pd[(virt_addr >> 21) & 0x1FF];
-            if ((pd_ent.entry & 0x1) == 0) {
-                if ((pd_ent.entry & 0x80) != 0) {
-                    // split large page
-                    uintptr_t orig_phys = pd_ent.entry & 0x000FFFFFFFFFF000u;
-                    auto page_for_split = (uintptr_t)take_page();
-                    pd_ent.entry = page_for_split | 3 /* present/read+write */;
-                    PDE *split_page = (PDE *)page_for_split;
-                    // re-create original mapping, will be partially overwritten shortly
-                    for (int i = 0; i < 512; i++) {
-                        split_page[i] = { orig_phys | 0x80 | 3 };
-                        orig_phys += PAGE2MB;
-                    }
-                }
-                else {
-                    // allocate:
-                    auto pt_page = (uintptr_t)take_page();
-                    pd_ent.entry = pt_page | 3 /* present/read+write */;
-                }
-            }
+            allocate_int_pt(pd_ent, true, PAGE4KB);
 
             // from pd_ent find the address of the page table:
             uintptr_t pt_addr = pd_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
-            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
-            //  shouldn't really happen though)
             PDE *pt = (PDE *)pt_addr;
 
             // set entrie(s) for 4kb page(s)
@@ -1183,9 +1129,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             }
         }
     };
-
-    // TODO make sure we always split first 1MB(?) into little pages
-
 
     // Map all regions from the EFI memory map.
     // Note that this will exclude framebuffer, Local APIC / IO APIC, probably any device mapping
