@@ -15,6 +15,12 @@
 extern EFI_BOOT_SERVICES *EBS;
 extern EFI_SYSTEM_TABLE *EST;
 
+// Supported page sizes:
+static const uintptr_t PAGE4KB = 0x1000u;
+static const uintptr_t PAGE2MB = 0x200000u;
+static const uintptr_t PAGE1GB = 0x40000000u;
+
+
 // Class to manage building a tosaithe boot protocol memory map structure
 class tosaithe_memmap {
     tsbp_mmap_entry *memmap_entries = nullptr;
@@ -53,7 +59,7 @@ public:
         capacity = capacity_p;
     }
 
-    void add_entry(tsbp_mmap_type type_p, uint64_t physaddr, uint64_t length)
+    void add_entry(tsbp_mmap_type type_p, uint64_t physaddr, uint64_t length, uint32_t flags)
     {
         if (entries == capacity) {
             if (!increase_capacity()) {
@@ -65,6 +71,7 @@ public:
         memmap_entries[entries].type = type_p;
         memmap_entries[entries].base = physaddr;
         memmap_entries[entries].length = length;
+        memmap_entries[entries].flags = flags;
         entries++;
     }
 
@@ -72,7 +79,7 @@ public:
     // trimmed (or removed in the case of total overlap).
     // On failure, throws std::bad_alloc (map may be invalid)
     // On success: map may require sorting
-    void insert_entry(tsbp_mmap_type type_p, uint64_t physaddr, uint64_t length)
+    void insert_entry(tsbp_mmap_type type_p, uint64_t physaddr, uint64_t length, uint32_t flags)
     {
         uint64_t physend = physaddr + length;
 
@@ -102,7 +109,7 @@ public:
                 else {
                     // split somewhere in the middle
                     uint64_t tail_len = ent_end - physend;
-                    add_entry(memmap_entries[i].type, physend, tail_len);
+                    add_entry(memmap_entries[i].type, physend, tail_len, memmap_entries[i].flags);
                     ent_len = physaddr - ent_base;
                     memmap_entries[i].length = ent_len;
                 }
@@ -110,7 +117,7 @@ public:
         }
 
         // Finally add the new entry:
-        add_entry(type_p, physaddr, length);
+        add_entry(type_p, physaddr, length, flags);
     }
 
     void sort() noexcept
@@ -391,7 +398,7 @@ error_out:
 }
 
 // Check whether a usable framebuffer exists, copy relevant info into 'fbinfo' if so
-// and store the framebuffer size into '*fb_size'.
+// and store the framebuffer size (rounded up to page boundary) into '*fb_size'.
 static void check_framebuffer(tosaithe_loader_data *fbinfo, uint64_t *fb_size)
 {
     EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
@@ -489,6 +496,74 @@ static void check_framebuffer(tosaithe_loader_data *fbinfo, uint64_t *fb_size)
     *fb_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
 }
 
+// Get a copy of the EFI memory map in an allocated buffer. Returns null on general failure or
+// throws std::bad_alloc for out-of-memory.
+EFI_MEMORY_DESCRIPTOR *get_efi_memmap(UINTN &memMapSize, UINTN &memMapKey, UINTN &memMapDescrSize, uint32_t &memMapDescrVersion)
+{
+    EFI_STATUS status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+    if (status != EFI_BUFFER_TOO_SMALL) {
+        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        return nullptr;
+    }
+
+    efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efi_memmap_ptr;
+
+    {
+        EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
+
+        if (efiMemMap == nullptr) {
+            throw std::bad_alloc();
+        }
+
+        status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+        while (status == EFI_BUFFER_TOO_SMALL) {
+            // Above allocation may have increased size of memory map, so we keep trying
+            free_pool(efiMemMap);
+            efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
+            if (efiMemMap == nullptr) {
+                throw std::bad_alloc();
+            }
+            status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
+        }
+
+        efi_memmap_ptr.reset(efiMemMap);
+    }
+
+    if (EFI_ERROR(status)) {
+        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        return nullptr;
+    }
+
+    return efi_memmap_ptr.release();
+}
+
+// Sort entries in the EFI memory map (by address).
+void sort_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN memMapSize, UINTN memMapKey,
+        UINTN memMapDescrSize)
+{
+    EFI_MEMORY_DESCRIPTOR *last_ent = (EFI_MEMORY_DESCRIPTOR *)
+            ((uintptr_t)memmap + memMapSize - memMapDescrSize);
+
+    // Pan me all you want for writing another bubble sort.
+    bool did_bubble;
+    do {
+        did_bubble = false;
+
+        EFI_MEMORY_DESCRIPTOR *ent = memmap;
+        while (ent != last_ent) {
+            EFI_MEMORY_DESCRIPTOR *next_ent = (EFI_MEMORY_DESCRIPTOR *)
+                    ((uintptr_t)ent + memMapDescrSize);
+            if (ent->PhysicalStart > next_ent->PhysicalStart) {
+                swap(*ent, *next_ent);
+                did_bubble = true;
+            }
+
+            ent = next_ent;
+        }
+    } while (did_bubble);
+}
+
+// Load a kernel via the TSBP (ToSaithe Boot Protocol)
 EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine)
 {
     efi_file_handle kernel_handle;
@@ -675,15 +750,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     // bss areas need to be cleared before entry to kernel
     std::vector<bss_area> bss_areas;
 
-    // Need to account for values in upper half
-//    const uintptr_t high_half_addr = 0xFFFFFFFF80000000;
-//    auto adj_vptr = [](uintptr_t vptr) {
-//        return vptr > high_half_addr ? (vptr - high_half_addr) : vptr;
-//    };
-
     unsigned num_loadable_segs = 0;
-
-
 
     // Find the total virtual address span of all segments (lowest_vaddr, highest_vaddr)
     for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
@@ -880,6 +947,24 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     }
 
 
+    // Get the current EFI memory map
+
+    UINTN memMapSize = 0;
+    UINTN memMapKey = 0;
+    UINTN memMapDescrSize = 0;
+    uint32_t memMapDescrVersion = 0;
+
+    efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efi_memmap_ptr {
+            get_efi_memmap(memMapSize, memMapKey, memMapDescrSize, memMapDescrVersion)
+        };
+
+    if (efi_memmap_ptr == nullptr) {
+        return EFI_LOAD_ERROR;
+    }
+
+    sort_efi_memmap(efi_memmap_ptr.get(), memMapSize, memMapKey, memMapDescrSize);
+
+
     // Allocate space for page tables
     // We will use 4-level paging, so we need:
     // A PML4 top-level page directory (4kb)
@@ -892,15 +977,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     // Allocate memory for page tables
 
-    efi_page_alloc page_tables_alloc;
-    page_tables_alloc.allocate(2);
-
-    PDE *page_tables = (PDE *)page_tables_alloc.get_ptr();
-
-    // initialise all entries as "not present"
-    for (unsigned i = 0; i < 512; i++) {
-        page_tables[i] = PDE{0}; // not present
-    }
 
     // Paging
     //
@@ -908,36 +984,274 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     // proper canonical form will duplicate bit 47 up through to bit 63, effectively dividing the
     // address space into a positive (47-63 are 0) and negative (47-63 are 1).
     //
+    //                        0 <-- lowest "low half" address
+    //         0x7FFF FFFF FFFF <-- highest "low half" address
+    //        -----------------------  (+ve/-ve split)
     //    0xFFFF 8000 0000 0000 <-- lowest "high half" address
     //    0xFFFF FFFF 8000 0000 <-- corresponds to (top - 2GB)
+    //    0xFFFF FFFF FFFF FFFF <-- top
     //
-    // We may as well just map as much as possible (and cover, hopefully, all
-    // available memory).
+    // It's quite handy to have all of physical memory mapped into the high half address as well
+    // as to have an identity mapping set up in the low half, so that's what TSBP will do. However,
+    // we also need to map the kernel from its logical address to its loaded address. Typically the
+    // kernel address will be in the (top - 2GB) range as that is efficient (addresses in that
+    // range can be accessed via instructions encoded with a 32-bit sign-extended address) and
+    // allows the lower half of the address range to be dedicated to user space.
     //
-    // Pagewise:
-    //   0xFFFF 8000 0000 0000 = PML4[256][0]
-    //   0xFFFF FFFF 8000 0000 = PML4[511][510]
+    // But, we can map the kernel anywhere.
     //
-    // If we use just a single second-level page table (with 1GB pages) we could almost cover
-    // 512GB. However, we need to map the top 2GB back to physical address 0, and we do this
-    // in the same page table (PML4[0] == PML4[256] == PML4[511]), so we are limited to covering
-    // 510GB. TODO - that's a lot, but there could theoretically be more memory than that.
 
-    // 1st level page tables (PML4):
-    // Set up three entries to map the first 510GB at each of 0, (high half), and (top - 2GB)
-    uint64_t PDPTaddress = page_tables_alloc.get_ptr() + 0x1000;
-    page_tables[0] = PDE{PDPTaddress | 0x7}; // present, writable, user-accessible
-    page_tables[256] = PDE{PDPTaddress | 0x7};
-    page_tables[511] = PDE{PDPTaddress | 0x7};
+    // - We want to use huge (1GB) pages for most of the mapping but:
+    //   - not if they would partially span a page range that isn't fully cacheable
+    //   - not for the first 1MB of address, since that almost definitely should be covered by
+    //     above cases we'll play it safe. This implies the entire first 1GB must be covered by <1GB
+    //     pages.
+    // - We can share mappings between low- and high- half if it doesn't overlap kernel mapping
+    // - For the page table pages, we'll allocate the pages in chunks and use the chunk from start
+    //   to end before allocating another chunk.
 
-    // 2nd level page tables:
-    for (unsigned int i = 0; i < 512; i++) {
-        // address || Page size (1GB page) || present, writable, user-accessible
-        page_tables[512 + i] = PDE{uint64_t(i) * 1024UL*1024UL*1024UL | (1UL << 7) | 0x7UL};
+    efi_page_alloc page_tables_alloc_pool;
+    page_tables_alloc_pool.allocate(8);
+    void * alloc_pool_next = (void *)page_tables_alloc_pool.get_ptr();
+
+    auto take_page = [&]() -> void * {
+        uintptr_t ap_end = (uintptr_t)page_tables_alloc_pool.get_ptr() + page_tables_alloc_pool.page_count() * PAGE4KB;
+        if (alloc_pool_next == (void *)ap_end) {
+            // TODO try to extend previous allocation first
+            page_tables_alloc_pool.release(); // FIXME this leaks
+            page_tables_alloc_pool.allocate(8);
+            alloc_pool_next = (void *)page_tables_alloc_pool.get_ptr();
+        }
+
+        void *r = alloc_pool_next;
+        alloc_pool_next = (void *)((uintptr_t)alloc_pool_next + PAGE4KB);
+        memset(r, 0, PAGE4KB);
+        return r;
+    };
+
+    PDE *page_tables = (PDE *)take_page();
+
+    // iterate through EFI map entries (they are ordered)
+    // combine on the fly if possible, allocate pages as large as possible
+
+    EFI_MEMORY_DESCRIPTOR *mmdesc = efi_memmap_ptr.get();
+    EFI_MEMORY_DESCRIPTOR *mmdesc_end = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapSize);
+
+    auto next_mmdesc_from = [&](EFI_MEMORY_DESCRIPTOR *mmdesc) {
+        return (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapDescrSize);
+    };
+
+    auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end) {
+        // FIXME check illegal page sizes based on phys/virt difference
+        // FIXME may need to split allocated large pages in order to remap over them
+
+        // Now we have a range, how big can we make the pages?
+        if ((phys_addr_beg & (PAGE1GB - 1)) == 0 && (phys_addr_end - phys_addr_beg) >= PAGE1GB) {
+            // 1GB pages!
+
+            // TODO don't use 1GB pages if not fully cacheable.
+
+            allocate_1gb_pages:
+
+            // allocate 2nd level page table if needed
+            auto &pde_ent = page_tables[(virt_addr >> 39) & 0x1FF];
+            if ((pde_ent.entry & 0x1) == 0) {
+                // allocate:
+                auto pdpt_page = (uintptr_t)take_page();
+                pde_ent.entry = pdpt_page | 3 /* present/read+write */;
+            }
+
+            // from pde_ent find the address of the next level:
+            uintptr_t pdpt_addr = pde_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
+            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
+            //  shouldn't really happen though)
+            PDE *pdpt = (PDE *)pdpt_addr;
+
+            // set entrie(s) for 1GB page(s)
+            int pdpt_ind = (virt_addr >> 30) & 0x1FF;
+            do {
+                pdpt[pdpt_ind] = {phys_addr_beg | 0x80 | 3 /* page size, present/read+write */ };
+                phys_addr_beg += PAGE1GB;
+                virt_addr += PAGE1GB;
+                if ((phys_addr_end - phys_addr_beg) < PAGE1GB) {
+                    break;
+                }
+            } while (++pdpt_ind < 512);
+
+            if ((phys_addr_end - phys_addr_beg) >= PAGE1GB) {
+                goto allocate_1gb_pages;
+            }
+        }
+
+        if ((phys_addr_beg & (PAGE2MB - 1)) == 0 && (phys_addr_end - phys_addr_beg) >= PAGE2MB) {
+            // 2MB pages
+
+            // TODO don't use 2MB pages if not fully cacheable.
+
+            allocate_2mb_pages:
+
+            // allocate 2nd level page table if needed
+            auto &pde_ent = page_tables[(virt_addr >> 39) & 0x1FF];
+            if ((pde_ent.entry & 0x1) == 0) {
+                // allocate:
+                auto pdpt_page = (uintptr_t)take_page();
+                pde_ent.entry = pdpt_page | 3 /* present/read+write */;
+            }
+
+            // from pde_ent find the address of the next level:
+            uintptr_t pdpt_addr = pde_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
+            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
+            //  shouldn't really happen though)
+            PDE *pdpt = (PDE *)pdpt_addr;
+
+            // allocate 3rd level page table if needed
+
+            auto &pdpt_ent = pdpt[(virt_addr >> 30) & 0x1FF];
+            if ((pdpt_ent.entry & 0x1) == 0) {
+                // allocate:
+                auto pdpt_page = (uintptr_t)take_page();
+                pdpt_ent.entry = pdpt_page | 3 /* present/read+write */;
+            }
+
+            // from pde_ent find the address of the next level:
+            uintptr_t pd_addr = pdpt_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
+            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
+            //  shouldn't really happen though)
+            PDE *pd = (PDE *)pd_addr;
+
+
+            // set entrie(s) for 2MB page(s)
+            int pd_ind = (virt_addr >> 21) & 0x1FF;
+            do {
+                pd[pd_ind] = {phys_addr_beg | 0x80 | 3 /* page size, present/read+write */ };
+                phys_addr_beg += PAGE2MB;
+                virt_addr += PAGE2MB;
+                if ((phys_addr_end - phys_addr_beg) < PAGE2MB) {
+                    break;
+                }
+            } while (++pd_ind < 512);
+
+            if ((phys_addr_end - phys_addr_beg) >= PAGE1GB) {
+                goto allocate_1gb_pages;
+            }
+            if ((phys_addr_end - phys_addr_beg) >= PAGE2MB) {
+                goto allocate_2mb_pages;
+            }
+        }
+
+        if (phys_addr_beg != phys_addr_end) {
+            // 4kb pages
+
+            allocate_4kb_pages:
+
+            // allocate 2nd level page table if needed
+            auto &pde_ent = page_tables[(virt_addr >> 39) & 0x1FF];
+            if ((pde_ent.entry & 0x1) == 0) {
+                // allocate:
+                auto pdpt_page = (uintptr_t)take_page();
+                pde_ent.entry = pdpt_page | 3 /* present/read+write */;
+            }
+
+            // from pde_ent find the address of the next level:
+            uintptr_t pdpt_addr = pde_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
+            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
+            //  shouldn't really happen though)
+            PDE *pdpt = (PDE *)pdpt_addr;
+
+            // allocate 3rd level page table (PD) if needed
+
+            auto &pdpt_ent = pdpt[(virt_addr >> 30) & 0x1FF];
+            if ((pdpt_ent.entry & 0x1) == 0) {
+                // allocate:
+                auto pdpt_page = (uintptr_t)take_page();
+                pdpt_ent.entry = pdpt_page | 3 /* present/read+write */;
+            }
+
+            // from pdpt_ent find the address of the next level:
+            uintptr_t pd_addr = pdpt_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
+            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
+            //  shouldn't really happen though)
+            PDE *pd = (PDE *)pd_addr;
+
+            // allocate 4th level page table (PT) if needed
+
+            auto &pd_ent = pd[(virt_addr >> 21) & 0x1FF];
+            if ((pd_ent.entry & 0x1) == 0) {
+                // allocate:
+                auto pt_page = (uintptr_t)take_page();
+                pd_ent.entry = pt_page | 3 /* present/read+write */;
+            }
+
+            // from pd_ent find the address of the page table:
+            uintptr_t pt_addr = pd_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
+            // (we only have 48 bits linear address so an address larger than that wouldn't work properly -
+            //  shouldn't really happen though)
+            PDE *pt = (PDE *)pt_addr;
+
+            // set entrie(s) for 4kb page(s)
+            int pt_ind = (virt_addr >> 12) & 0x1FF;
+            do {
+                pt[pt_ind] = {phys_addr_beg | 3 /* present/read+write */ };
+                phys_addr_beg += PAGE4KB;
+                virt_addr += PAGE4KB;
+                if (phys_addr_end == phys_addr_beg) {
+                    break;
+                }
+            } while (++pt_ind < 512);
+
+            if ((phys_addr_beg & (PAGE1GB - 1)) == 0 && (phys_addr_end - phys_addr_beg) >= PAGE1GB) {
+                goto allocate_1gb_pages;
+            }
+            if ((phys_addr_end - phys_addr_beg) >= PAGE2MB) {
+                goto allocate_2mb_pages;
+            }
+            if (phys_addr_beg != phys_addr_end) {
+                goto allocate_4kb_pages;
+            }
+        }
+    };
+
+
+    // TODO make sure we always split first 1MB(?) into little pages
+
+    do {
+        auto mmdesc_phys_beg = mmdesc->PhysicalStart;
+        auto mmdesc_phys_end = mmdesc->PhysicalStart + mmdesc->NumberOfPages * 4096u;
+
+        EFI_MEMORY_DESCRIPTOR *next_mmdesc = next_mmdesc_from(mmdesc);
+        while (next_mmdesc != mmdesc_end) {
+            if (next_mmdesc->PhysicalStart != mmdesc_phys_end) {
+                break;
+            }
+
+            // TODO maybe can be looser with this check
+            if (next_mmdesc->Attribute != mmdesc->Attribute) {
+                break;
+            }
+
+            // extend end to this next descriptor's end:
+            mmdesc_phys_end = next_mmdesc->PhysicalStart + next_mmdesc->NumberOfPages * 4096u;
+
+            next_mmdesc = next_mmdesc_from(next_mmdesc);
+        }
+
+        // XXX need to set caching attributes correctly on pages
+        do_mapping(mmdesc_phys_beg, mmdesc_phys_beg, mmdesc_phys_end);
+
+        mmdesc = next_mmdesc;
+    } while (mmdesc != mmdesc_end);
+
+    // Now map low half into high half:
+    for (int i = 0; i < 256; i++) {
+        page_tables[i+256] = page_tables[i];
     }
-    // Map 2G at tail back to start (i.e. map 0xFFFFFFFF80000000 -> 0).
-    page_tables[512 + 510] = page_tables[512];
-    page_tables[512 + 511] = page_tables[513];
+
+    // FIXME HACK Now fixed kernel mapping at top-2GB:
+    PDE *pml4_511_page = (PDE *) take_page();
+    page_tables[511].entry = (uintptr_t)pml4_511_page | 3;
+    pml4_511_page[510].entry = 0 | 0x80 /* page size */ | 3 /* present+writable */; // map back to 0
+
+    // We'll map the framebuffer in, below.
 
 
     // Set up loader_data
@@ -956,11 +1270,21 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     uint64_t fb_size = 0;
     check_framebuffer(&loader_data, &fb_size);
 
+    if (fb_size != 0) {
+        // Need to map the framebuffer in
+        // XXX
+        // FIXME
+        // TODO
+        uintptr_t fb_addr = loader_data.framebuffer_addr;
+        do_mapping(fb_addr, fb_addr, fb_addr + fb_size);
+    }
+
 
     // Build tosaithe protocol memory map from EFI memory map
 
     // This is a little tricky. Since we keep the loader memory map in allocated memory, the
-    // map may change between when we retrieve it and when we convert it to loader format.
+    // map may change between when we retrieve it and when we convert it to loader format
+    // (because building the loader-format map may allocate memory).
     // We'll allocate space first to try to avoid this - enough for 64 entries. If necessary we
     // can loop back and re-build the map from scratch.
 
@@ -972,47 +1296,16 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     retrieve_efi_memmap:
 
-    UINTN memMapSize = 0;
-    UINTN memMapKey = 0;
-    UINTN memMapDescrSize = 0;
-    uint32_t memMapDescrVersion = 0;
-    status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-    if (status != EFI_BUFFER_TOO_SMALL) {
-        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+    efi_memmap_ptr.reset(); // free existing map before querying new one!
+    efi_memmap_ptr.reset(get_efi_memmap(memMapSize, memMapKey, memMapDescrSize, memMapDescrVersion));
+
+    if (efi_memmap_ptr == nullptr) {
         return EFI_LOAD_ERROR;
-    }
-
-    efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efi_memmap_ptr;
-
-    {
-        EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
-
-        if (efiMemMap == nullptr) {
-            throw std::bad_alloc();
-        }
-
-        status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-        while (status == EFI_BUFFER_TOO_SMALL) {
-            // Above allocation may have increased size of memory map, so we keep trying
-            free_pool(efiMemMap);
-            efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
-            if (efiMemMap == nullptr) {
-                throw std::bad_alloc();
-            }
-            status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-        }
-
-        efi_memmap_ptr.reset(efiMemMap);
     }
 
     retrieve_efi_memmap_2:
 
-    if (EFI_ERROR(status)) {
-        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
-        return EFI_LOAD_ERROR;
-    }
-
-    // Copy entries from EFI memory map our boot protocol map
+    // Copy entries from EFI memory map to our boot protocol map
     auto *efi_mem_iter = efi_memmap_ptr.get();
     auto *efi_mem_end = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_memmap_ptr.get() + memMapSize);
     while (efi_mem_iter < efi_mem_end) {
@@ -1059,7 +1352,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         }
 
         tsbp_memmap.add_entry(st_type, efi_mem_iter->PhysicalStart,
-                efi_mem_iter->NumberOfPages * 0x1000u);
+                efi_mem_iter->NumberOfPages * 0x1000u, 0 /* FIXME */);
         efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
     }
 
@@ -1070,7 +1363,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     // Insert memory-map entries for kernel
     if (elf_header_alloc) {
         uint64_t kernel_size = elf_header_alloc.page_count() * 0x1000u;
-        tsbp_memmap.insert_entry(tsbp_mmap_type::KERNEL_AND_MODULES, elf_header_alloc.get_ptr(), kernel_size);
+        tsbp_memmap.insert_entry(tsbp_mmap_type::KERNEL_AND_MODULES, elf_header_alloc.get_ptr(), kernel_size, 0 /* FIXME */);
     }
     else {
         // FIXME restore this functionality
@@ -1081,7 +1374,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     }
 
     if (fb_size != 0) {
-        tsbp_memmap.insert_entry(tsbp_mmap_type::FRAMEBUFFER, loader_data.framebuffer_addr, fb_size);
+        tsbp_memmap.insert_entry(tsbp_mmap_type::FRAMEBUFFER, loader_data.framebuffer_addr, fb_size, 0 /* FIXME */);
     }
 
     tsbp_memmap.sort();
