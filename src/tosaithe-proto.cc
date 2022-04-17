@@ -1222,6 +1222,18 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         // XXX need to set caching attributes correctly on pages
         do_mapping(mmdesc_phys_beg, mmdesc_phys_beg, mmdesc_phys_end);
 
+        // Within the 1st 4GB, map everything (even if not in the memory map). This will encompass
+        // the LAPIC and IOAPIC for example.
+        if (mmdesc_phys_end < 4*PAGE1GB) {
+            if (next_mmdesc != mmdesc_end && next_mmdesc->PhysicalStart != mmdesc_phys_end) {
+                uintptr_t end_map_range = std::min(next_mmdesc->PhysicalStart, 4*PAGE1GB);
+                do_mapping(mmdesc_phys_end, mmdesc_phys_end, end_map_range);
+            }
+            else {
+                do_mapping(mmdesc_phys_end, mmdesc_phys_end, 4*PAGE1GB);
+            }
+        }
+
         mmdesc = next_mmdesc;
     } while (mmdesc != mmdesc_end);
 
