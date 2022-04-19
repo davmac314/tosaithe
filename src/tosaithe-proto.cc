@@ -23,6 +23,18 @@ static const uintptr_t PAGE1GB = 0x40000000u;
 // Top of memory minus 2GB. The kernel virtual address must be within this region.
 static const uintptr_t TOP_MINUS_2GB = 0xFFFFFFFF80000000u;
 
+template <typename T>
+T round_down_to(T val, T alignment)
+{
+    return val - val % alignment;
+}
+
+template <typename T>
+T round_up_to(T val, T alignment)
+{
+    return round_down_to(val + alignment - 1, alignment);
+}
+
 
 // Class to manage building a tosaithe boot protocol memory map structure
 class tosaithe_memmap {
@@ -830,23 +842,33 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     // Allocate space for kernel; we need to ensure sufficient alignment
 
-    UINTN kernel_pages = (highest_vaddr - lowest_vaddr + 0xFFFu) / 0x1000u;
 
     efi_page_alloc kernel_alloc;
-    kernel_alloc.allocate(kernel_pages);
 
-    // FIXME check alignment, Re-locate if necessary:
-    if ((kernel_alloc.get_ptr() & (seg_alignment - 1)) != 0) {
-        con_write(L"Error: accidentally allocated misaligned kernel block FIXME\r\n");
-        return EFI_LOAD_ERROR;
-        // First try to allocate extra at the start:
-        // FIXME
-        // If that fails, try at the end:
-        // FIXME
-        // Finally, try to allocate a larger region:
-        // FIXME
+    {
+        UINTN req_size = round_up_to(highest_vaddr - lowest_vaddr, PAGE4KB);
+        UINTN pages_to_alloc = (req_size + seg_alignment - 1) / PAGE4KB;
 
-        //        status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, alloc_pages, &alloc_from);
+        kernel_alloc.allocate(pages_to_alloc);
+
+        if ((kernel_alloc.get_ptr() & (seg_alignment - 1)) != 0) {
+            // trim start
+            uintptr_t aligned_alloc = kernel_alloc.get_ptr()
+                    + (seg_alignment - (kernel_alloc.get_ptr() % seg_alignment));
+            if (aligned_alloc != kernel_alloc.get_ptr()) {
+                EBS->FreePages(kernel_alloc.get_ptr(),
+                        (aligned_alloc - kernel_alloc.get_ptr()) / PAGE4KB);
+            }
+
+            // trim end
+            uintptr_t end_trim = kernel_alloc.get_ptr() + pages_to_alloc * PAGE4KB
+                    - (aligned_alloc + req_size);
+            if (end_trim != 0) {
+                EBS->FreePages(aligned_alloc + req_size, end_trim / PAGE4KB);
+            }
+
+            kernel_alloc.rezone(aligned_alloc, req_size / PAGE4KB);
+        }
     }
 
 
