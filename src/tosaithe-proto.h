@@ -35,6 +35,8 @@ struct tosaithe_loader_data {
     tsbp_mmap_entry *memmap;
     uint32_t memmap_entries;
 
+    void *   acpi_rdsp;  // ACPI RDSP (Root Data Structure Pointer)
+
     // Framebuffer info
 
     uintptr_t framebuffer_addr;   // physical address of the framebuffer (0 if none available)

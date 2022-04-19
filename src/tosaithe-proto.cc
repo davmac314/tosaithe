@@ -412,6 +412,18 @@ error_out:
     return false;
 }
 
+// Find a configuration table by GUID
+static void *find_config_table(const EFI_GUID &table_id)
+{
+    EFI_CONFIGURATION_TABLE *tables = EST->ConfigurationTable;
+    for (UINTN i = 0; i < EST->NumberOfTableEntries; i++) {
+        if (memcmp(&tables[i].VendorGuid, &table_id, sizeof(EFI_GUID)) == 0) {
+            return tables[i].VendorTable;
+        }
+    }
+    return nullptr;
+}
+
 // Check whether a usable framebuffer exists, copy relevant info into 'fbinfo' if so
 // and store the framebuffer size (rounded up to page boundary) into '*fb_size'.
 static void check_framebuffer(tosaithe_loader_data *fbinfo, uint64_t *fb_size)
@@ -517,7 +529,7 @@ EFI_MEMORY_DESCRIPTOR *get_efi_memmap(UINTN &memMapSize, UINTN &memMapKey, UINTN
 {
     EFI_STATUS status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
     if (status != EFI_BUFFER_TOO_SMALL) {
-        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        con_write(L"Error: could not retrieve EFI memory map\r\n");
         return nullptr;
     }
 
@@ -545,7 +557,7 @@ EFI_MEMORY_DESCRIPTOR *get_efi_memmap(UINTN &memMapSize, UINTN &memMapKey, UINTN
     }
 
     if (EFI_ERROR(status)) {
-        con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+        con_write(L"Error: could not retrieve EFI memory map\r\n");
         return nullptr;
     }
 
@@ -1213,6 +1225,11 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     loader_data.flags = 0;
     loader_data.cmdline = nullptr; // TODO
     // .memmap/.memmap_entries set below after construction of the map
+
+    loader_data.acpi_rdsp = find_config_table(EFI_acpi20_table_guid);
+    if (loader_data.acpi_rdsp == nullptr) {
+        loader_data.acpi_rdsp = find_config_table(EFI_acpi_table_guid);
+    }
 
     // Framebuffer setup
 
