@@ -70,6 +70,23 @@ typedef enum {
     EfiPalCode, EfiPersistentMemory, EfiMaxMemoryType
 } EFI_MEMORY_TYPE;
 
+// Memory attributes
+#define EFI_MEMORY_UC 0x1
+#define EFI_MEMORY_WC 0x2
+#define EFI_MEMORY_WT 0x4
+#define EFI_MEMORY_WB 0x8
+#define EFI_MEMORY_UCE 0x10
+#define EFI_MEMORY_WP 0x1000
+#define EFI_MEMORY_RP 0x2000
+#define EFI_MEMORY_XP 0x4000
+#define EFI_MEMORY_NV 0x8000
+#define EFI_MEMORY_MORE_RELIABLE 0x10000
+#define EFI_MEMORY_RO 0x20000
+#define EFI_MEMORY_SP 0x40000
+#define EFI_MEMORY_CPU_CRYPTO 0x80000
+#define EFI_MEMORY_RUNTIME 0x8000000000000000
+
+
 typedef enum { TimerCancel, TimerPeriodic, TimerRelative} EFI_TIMER_DELAY;
 
 // And the most useless enum award goes to:

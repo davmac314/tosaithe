@@ -66,12 +66,16 @@ enum class tsbp_mmap_type : uint32_t {
 };
 
 struct tsbp_mmap_flags {
-    static const uint32_t CACHE_MASK = 0x7;
-    static const uint32_t CACHE_UC = 0x0; // no caching
-    static const uint32_t CACHE_WC = 0x1; // write-combining
-    static const uint32_t CACHE_WT = 0x2; // write-thru (allows reads from cache)
-    static const uint32_t CACHE_WB = 0x3; // write-back (full caching)
+    static const uint32_t CACHE_MASK = 0x7;  // mask for isolating cache mode
+
+    // Cache mode. The numbering is designed to match (for 0-2, designed to match equivalent PCD-PWT combination)
+    static const uint32_t CACHE_WB = 0x0; // write-back (full caching)
+    static const uint32_t CACHE_WT = 0x1; // write-thru (allows reads from cache)
+    static const uint32_t CACHE_UC = 0x2; // uncacheable
+    // for the following types, generally should map to uncacheable if PAT is not available
+    // (which then may be overwridden via MTRRs)
     static const uint32_t CACHE_WP = 0x4; // write-protect (allow reads from cache, writes don't go to cache)
+    static const uint32_t CACHE_WC = 0x5; // write-combining (writes go through store buffer, not cached)
 };
 
 struct tsbp_mmap_entry {

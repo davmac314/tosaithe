@@ -604,6 +604,8 @@ void compact_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN &memMapSize, UINTN 
 
     while (scan_ent != end_ent) {
         // can we merge?
+        // FIXME don't merge runtime memory regions (Attribute has RUNTIME set)
+        //    (SetVirtualMemoryMap requires each runtime region to be specified)
         if (cur_ent->Type == scan_ent->Type && cur_ent->Attribute == scan_ent->Attribute
                 && scan_ent->PhysicalStart == (cur_ent->PhysicalStart + cur_ent->NumberOfPages * PAGE4KB)) {
             cur_ent->NumberOfPages += scan_ent->NumberOfPages;
@@ -984,6 +986,16 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         uint64_t entry;
     };
 
+    enum class memory_types {
+        CACHE_WB = 0x0, // write-back (full caching)
+        CACHE_WT = 0x1, // write-thru (allows reads from cache)
+        CACHE_UC = 0x2, // uncacheable
+        // for the following types, generally should map to uncacheable if PAT is not available
+        // (which then may be overwridden via MTRRs)
+        CACHE_WP = 0x4, // write-protect (allow reads from cache, writes don't go to cache)
+        CACHE_WC = 0x5 // write-combining (writes go through store buffer, not cached)
+    };
+
     // Paging
     //
     // With standard 4-level paging, there are 48 bits of linear address (bits 0-47). Addresses in
@@ -1201,8 +1213,22 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     // Note that this will exclude framebuffer, Local APIC / IO APIC, probably any device mapping
     // that isn't specific to the system.
 
+    static_assert(tsbp_mmap_flags::CACHE_UC == (int)memory_types::CACHE_UC);
+    static_assert(tsbp_mmap_flags::CACHE_WB == (int)memory_types::CACHE_WB);
+    static_assert(tsbp_mmap_flags::CACHE_WC == (int)memory_types::CACHE_WC);
+    static_assert(tsbp_mmap_flags::CACHE_WP == (int)memory_types::CACHE_WP);
+    static_assert(tsbp_mmap_flags::CACHE_WT == (int)memory_types::CACHE_WT);
+
     EFI_MEMORY_DESCRIPTOR *mmdesc = efi_memmap_ptr.get();
     EFI_MEMORY_DESCRIPTOR *mmdesc_end = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapSize);
+
+    auto mem_type_for_efi_attr = [&](uint64_t attr) {
+        if (attr & EFI_MEMORY_WB) return memory_types::CACHE_WB;
+        if (attr & EFI_MEMORY_WT) return memory_types::CACHE_WT;
+        if (attr & EFI_MEMORY_WP) return memory_types::CACHE_WP;
+        if (attr & EFI_MEMORY_WC) return memory_types::CACHE_WC;
+        return memory_types::CACHE_UC;
+    };
 
     auto next_mmdesc_from = [&](EFI_MEMORY_DESCRIPTOR *mmdesc) {
         return (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapDescrSize);
@@ -1212,14 +1238,24 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         auto mmdesc_phys_beg = mmdesc->PhysicalStart;
         auto mmdesc_phys_end = mmdesc->PhysicalStart + mmdesc->NumberOfPages * 4096u;
 
+        if (mmdesc_phys_beg != 0) {
+            // Unusual to have nothing mapped at address 0, but let's handle it (we want
+            // to ensure the entire first 4GB is mapped regardless of whether there is physical
+            // memory present):
+            auto low0_end = std::min(mmdesc_phys_beg, 4*PAGE1GB);
+            do_mapping(0, low0_end, low0_end);
+        }
+
         EFI_MEMORY_DESCRIPTOR *next_mmdesc = next_mmdesc_from(mmdesc);
         while (next_mmdesc != mmdesc_end) {
             if (next_mmdesc->PhysicalStart != mmdesc_phys_end) {
                 break;
             }
 
-            // TODO maybe can be looser with this check
-            if (next_mmdesc->Attribute != mmdesc->Attribute) {
+            auto mem_type_this = mem_type_for_efi_attr(mmdesc->Attribute);
+            auto mem_type_next = mem_type_for_efi_attr(next_mmdesc->Attribute);
+
+            if (mem_type_this != mem_type_next) {
                 break;
             }
 
@@ -1369,6 +1405,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             kernel_alloc.page_count() * PAGE4KB, 0 /* FIXME */);
 
     if (fb_size != 0) {
+        // FIXME if there's an existing MMIO entry replace the whole entry
         tsbp_memmap.insert_entry(tsbp_mmap_type::FRAMEBUFFER, loader_data.framebuffer_addr, fb_size, 0 /* FIXME */);
     }
 
@@ -1425,6 +1462,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     }
 
     // Now, put our page tables in place:
+
+    // TODO set up PAT as per memory_type:: enum.
 
     asm volatile (
             "cli\n"
