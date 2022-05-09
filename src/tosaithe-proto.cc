@@ -525,6 +525,10 @@ static void check_framebuffer(tosaithe_loader_data *fbinfo, uint64_t *fb_size)
 
 // Get a copy of the EFI memory map in an allocated buffer. Returns null on general failure or
 // throws std::bad_alloc for out-of-memory.
+//   memMapSize - will contain size in bytes
+//   memMapKey - will contain key suitable for passing to ExitBootServices
+//   memMapDescrSize - will be set to the size of each descriptor entry
+//   memMapDescrVersion - will be set to the descriptor version
 EFI_MEMORY_DESCRIPTOR *get_efi_memmap(UINTN &memMapSize, UINTN &memMapKey, UINTN &memMapDescrSize, uint32_t &memMapDescrVersion)
 {
     EFI_STATUS status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
@@ -565,8 +569,7 @@ EFI_MEMORY_DESCRIPTOR *get_efi_memmap(UINTN &memMapSize, UINTN &memMapKey, UINTN
 }
 
 // Sort entries in the EFI memory map (by address).
-void sort_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN memMapSize, UINTN memMapKey,
-        UINTN memMapDescrSize)
+void sort_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN memMapSize, UINTN memMapDescrSize)
 {
     EFI_MEMORY_DESCRIPTOR *last_ent = (EFI_MEMORY_DESCRIPTOR *)
             ((uintptr_t)memmap + memMapSize - memMapDescrSize);
@@ -588,6 +591,31 @@ void sort_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN memMapSize, UINTN memM
             ent = next_ent;
         }
     } while (did_bubble);
+}
+
+// Compact EFI memory map by merging adjacent entries with same type/attributes and adjacent range
+void compact_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN &memMapSize, UINTN memMapDescrSize)
+{
+    EFI_MEMORY_DESCRIPTOR *end_ent = (EFI_MEMORY_DESCRIPTOR *)
+            ((uintptr_t)memmap + memMapSize);
+
+    EFI_MEMORY_DESCRIPTOR *cur_ent = memmap;
+    EFI_MEMORY_DESCRIPTOR *scan_ent = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)memmap + memMapDescrSize);
+
+    while (scan_ent != end_ent) {
+        // can we merge?
+        if (cur_ent->Type == scan_ent->Type && cur_ent->Attribute == scan_ent->Attribute
+                && scan_ent->PhysicalStart == (cur_ent->PhysicalStart + cur_ent->NumberOfPages * PAGE4KB)) {
+            cur_ent->NumberOfPages += scan_ent->NumberOfPages;
+        }
+        else {
+            cur_ent = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)cur_ent + memMapDescrSize);
+            *cur_ent = *scan_ent;
+        }
+        scan_ent = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)scan_ent + memMapDescrSize);
+    }
+
+    memMapSize = ((uintptr_t)cur_ent - (uintptr_t)memmap) + memMapDescrSize;
 }
 
 // Load a kernel via the TSBP (ToSaithe Boot Protocol)
@@ -852,8 +880,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         con_write(L"Error: unsupported ELF structure\r\n");
     }
 
-    // Allocate space for kernel; we need to ensure sufficient alignment
 
+    // Allocate space for kernel; we need to ensure sufficient alignment
 
     efi_page_alloc kernel_alloc;
 
@@ -947,8 +975,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         return EFI_LOAD_ERROR;
     }
 
-    sort_efi_memmap(efi_memmap_ptr.get(), memMapSize, memMapKey, memMapDescrSize);
-
+    sort_efi_memmap(efi_memmap_ptr.get(), memMapSize, memMapDescrSize);
+    compact_efi_memmap(efi_memmap_ptr.get(), memMapSize, memMapDescrSize);
 
     // Allocate memory for page tables
 
