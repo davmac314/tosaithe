@@ -130,6 +130,19 @@ public:
         return true;
     }
 
+    // extend allocation (without moving), non-throwing
+    bool extend_nx(UINTN num_pages) noexcept
+    {
+        UINTN origPages = get().second;
+        EFI_PHYSICAL_ADDRESS address = get().first + origPages * 4096u;
+        EFI_STATUS status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, num_pages, &address);
+        if (EFI_ERROR(status)) {
+            return false;
+        }
+        rezone(get().first, origPages + num_pages);
+        return true;
+    }
+
     // change the underlying allocated area, without performing any allocation/free
     void rezone(EFI_PHYSICAL_ADDRESS address, UINTN num_pages) noexcept
     {

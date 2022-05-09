@@ -1013,17 +1013,22 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     // - For the page table pages, we'll allocate the pages in chunks and use the chunk from start
     //   to end before allocating another chunk.
 
+    const int PAGE_POOL_ALLOC_SIZE = 8;
+
+    std::vector<efi_page_alloc> page_table_allocs;
+
     efi_page_alloc page_tables_alloc_pool;
-    page_tables_alloc_pool.allocate(8);
+    page_tables_alloc_pool.allocate(PAGE_POOL_ALLOC_SIZE);
     void * alloc_pool_next = (void *)page_tables_alloc_pool.get_ptr();
 
     auto take_page = [&]() -> void * {
         uintptr_t ap_end = (uintptr_t)page_tables_alloc_pool.get_ptr() + page_tables_alloc_pool.page_count() * PAGE4KB;
         if (alloc_pool_next == (void *)ap_end) {
-            // TODO try to extend previous allocation first
-            page_tables_alloc_pool.release(); // FIXME this leaks
-            page_tables_alloc_pool.allocate(8);
-            alloc_pool_next = (void *)page_tables_alloc_pool.get_ptr();
+            if (!page_tables_alloc_pool.extend_nx(PAGE_POOL_ALLOC_SIZE)) {
+                page_table_allocs.emplace_back(std::move(page_tables_alloc_pool));
+                page_tables_alloc_pool.allocate(PAGE_POOL_ALLOC_SIZE);
+                alloc_pool_next = (void *)page_tables_alloc_pool.get_ptr();
+            }
         }
 
         void *r = alloc_pool_next;
