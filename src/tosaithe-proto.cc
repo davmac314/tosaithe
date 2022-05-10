@@ -620,6 +620,30 @@ void compact_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN &memMapSize, UINTN 
     memMapSize = ((uintptr_t)cur_ent - (uintptr_t)memmap) + memMapDescrSize;
 }
 
+// Find an entry by address in a pre-sorted EFI memory map
+EFI_MEMORY_DESCRIPTOR *efi_memmap_find(UINTN addr, EFI_MEMORY_DESCRIPTOR *memmap,
+        UINTN memMapSize, UINTN memMapDescrSize)
+{
+    EFI_MEMORY_DESCRIPTOR *end_ent = (EFI_MEMORY_DESCRIPTOR *)
+            ((uintptr_t)memmap + memMapSize);
+
+    EFI_MEMORY_DESCRIPTOR *cur_ent = memmap;
+
+    while (cur_ent != end_ent) {
+        if (cur_ent->PhysicalStart <= addr) {
+            UINTN phys_end = cur_ent->PhysicalStart + cur_ent->NumberOfPages * PAGE4KB;
+            if (phys_end > addr) {
+                return cur_ent;
+            }
+        }
+        else {
+            break;
+        }
+        cur_ent = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)cur_ent + memMapDescrSize);
+    }
+    return nullptr;
+}
+
 // Load a kernel via the TSBP (ToSaithe Boot Protocol)
 EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine)
 {
@@ -1052,12 +1076,16 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     PDE *page_tables = (PDE *)take_page();
 
     // Create page mapping for a region
-    auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end) {
+    auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end, memory_types mem_type) {
         // FIXME don't assume availability of 1GB pages
 
         uintptr_t virt_phys_diff = virt_addr - phys_addr_beg;
         bool use_1gb_pages = (virt_phys_diff & (PAGE1GB - 1)) == 0;
         bool use_2mb_pages = (virt_phys_diff & (PAGE2MB - 1)) == 0;
+
+        // PWT = bit 3
+        // PCD = bit 4
+        // PAT = bit 12 (1GB/2MB page) or bit 7 (4kb page)
 
         // allocate an intermediate page table for a given entry
         auto allocate_int_pt = [&](PDE &pde_ent, bool split_large, uintptr_t pg_size) {
@@ -1065,14 +1093,25 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
                 // intermediate already exists... or is it a large page?
                 if (split_large && (pde_ent.entry & 0x80) != 0) {
                     // split large page
-                    // FIXME preserve caching attributes
+
+                    // Preserve caching attributes (memory type):
+                    uint64_t PAT_PCD_PWT_PS_dst;
+                    if (pg_size == PAGE4KB) {
+                        // PAT is in different place between 4kb page entries and larger entries:
+                        bool PAT_src = (pde_ent.entry & 0x1000) != 0;
+                        PAT_PCD_PWT_PS_dst = (pde_ent.entry & 0x18) | (PAT_src ? 0x80 : 0x0);
+                    }
+                    else {
+                        PAT_PCD_PWT_PS_dst = (pde_ent.entry & 0x1018) | 0x80 /* page size */;
+                    }
+
                     uintptr_t orig_phys = pde_ent.entry & 0x000FFFFFFFFFF000u;
                     auto page_for_split = (uintptr_t)take_page();
                     pde_ent.entry = page_for_split | 3 /* present/read+write */;
                     PDE *split_page = (PDE *)page_for_split;
                     // re-create original mapping, will be partially overwritten shortly
                     for (int i = 0; i < 512; i++) {
-                        split_page[i] = { orig_phys | 0x80 | 3 };
+                        split_page[i] = { orig_phys | 3 | PAT_PCD_PWT_PS_dst };
                         orig_phys += pg_size;
                     }
                 }
@@ -1084,7 +1123,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             }
         };
 
-        // The following three blocks of code (if statments) are pretty similar, but each handles
+        // The following three blocks of code (if statements) are pretty similar, but each handles
         // a different page size. For smaller page sizes we have more intermediate levels to deal
         // with.
 
@@ -1101,10 +1140,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             uintptr_t pdpt_addr = pde_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
             PDE *pdpt = (PDE *)pdpt_addr;
 
+            uint64_t PAT_PCD_PWT_PS_dst = ((uint64_t)mem_type & 3) << 3; // PCD, PWT
+            PAT_PCD_PWT_PS_dst |= ((uint64_t)mem_type & 4) << 10; // PAT
+            PAT_PCD_PWT_PS_dst |= 0x80; // PS
+
             // set entrie(s) for 1GB page(s)
             int pdpt_ind = (virt_addr >> 30) & 0x1FF;
             do {
-                pdpt[pdpt_ind] = {phys_addr_beg | 0x80 | 3 /* page size, present/read+write */ };
+                pdpt[pdpt_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | 3 /* present/read+write */ };
                 phys_addr_beg += PAGE1GB;
                 virt_addr += PAGE1GB;
                 if ((phys_addr_end - phys_addr_beg) < PAGE1GB) {
@@ -1138,10 +1181,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             uintptr_t pd_addr = pdpt_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
             PDE *pd = (PDE *)pd_addr;
 
+            uint64_t PAT_PCD_PWT_PS_dst = ((uint64_t)mem_type & 3) << 3; // PCD, PWT
+            PAT_PCD_PWT_PS_dst |= ((uint64_t)mem_type & 4) << 10; // PAT
+            PAT_PCD_PWT_PS_dst |= 0x80; // PS
+
             // set entrie(s) for 2MB page(s)
             int pd_ind = (virt_addr >> 21) & 0x1FF;
             do {
-                pd[pd_ind] = {phys_addr_beg | 0x80 | 3 /* page size, present/read+write */ };
+                pd[pd_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | 3 /* present/read+write */ };
                 phys_addr_beg += PAGE2MB;
                 virt_addr += PAGE2MB;
                 if ((phys_addr_end - phys_addr_beg) < PAGE2MB) {
@@ -1186,10 +1233,13 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             uintptr_t pt_addr = pd_ent.entry & 0x000FFFFFFFFFF000u; // 52 bits physical
             PDE *pt = (PDE *)pt_addr;
 
+            uint64_t PAT_PCD_PWT_PS_dst = ((uint64_t)mem_type & 3) << 3; // PCD, PWT
+            PAT_PCD_PWT_PS_dst |= ((uint64_t)mem_type & 4) << 5; // PAT (bit 7)
+
             // set entrie(s) for 4kb page(s)
             int pt_ind = (virt_addr >> 12) & 0x1FF;
             do {
-                pt[pt_ind] = {phys_addr_beg | 3 /* present/read+write */ };
+                pt[pt_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | 3 /* present/read+write */ };
                 phys_addr_beg += PAGE4KB;
                 virt_addr += PAGE4KB;
                 if (phys_addr_end == phys_addr_beg) {
@@ -1243,8 +1293,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             // to ensure the entire first 4GB is mapped regardless of whether there is physical
             // memory present):
             auto low0_end = std::min(mmdesc_phys_beg, 4*PAGE1GB);
-            do_mapping(0, low0_end, low0_end);
+            do_mapping(0, low0_end, low0_end, memory_types::CACHE_UC);
         }
+
+        auto mem_type_this = mem_type_for_efi_attr(mmdesc->Attribute);
 
         EFI_MEMORY_DESCRIPTOR *next_mmdesc = next_mmdesc_from(mmdesc);
         while (next_mmdesc != mmdesc_end) {
@@ -1252,9 +1304,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
                 break;
             }
 
-            auto mem_type_this = mem_type_for_efi_attr(mmdesc->Attribute);
             auto mem_type_next = mem_type_for_efi_attr(next_mmdesc->Attribute);
-
             if (mem_type_this != mem_type_next) {
                 break;
             }
@@ -1265,18 +1315,17 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             next_mmdesc = next_mmdesc_from(next_mmdesc);
         }
 
-        // XXX need to set caching attributes correctly on pages
-        do_mapping(mmdesc_phys_beg, mmdesc_phys_beg, mmdesc_phys_end);
+        do_mapping(mmdesc_phys_beg, mmdesc_phys_beg, mmdesc_phys_end, mem_type_this);
 
         // Within the 1st 4GB, map everything (even if not in the memory map). This will encompass
         // the LAPIC and IOAPIC for example.
         if (mmdesc_phys_end < 4*PAGE1GB) {
             if (next_mmdesc != mmdesc_end && next_mmdesc->PhysicalStart != mmdesc_phys_end) {
                 uintptr_t end_map_range = std::min(next_mmdesc->PhysicalStart, 4*PAGE1GB);
-                do_mapping(mmdesc_phys_end, mmdesc_phys_end, end_map_range);
+                do_mapping(mmdesc_phys_end, mmdesc_phys_end, end_map_range, memory_types::CACHE_UC);
             }
             else {
-                do_mapping(mmdesc_phys_end, mmdesc_phys_end, 4*PAGE1GB);
+                do_mapping(mmdesc_phys_end, mmdesc_phys_end, 4*PAGE1GB, memory_types::CACHE_UC);
             }
         }
 
@@ -1303,12 +1352,23 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     // Framebuffer setup
 
     uint64_t fb_size = 0;
+    uint64_t fb_region = 0;
     check_framebuffer(&loader_data, &fb_size);
 
     if (fb_size != 0) {
         // Need to map the framebuffer in
         uintptr_t fb_addr = loader_data.framebuffer_addr;
-        do_mapping(fb_addr, fb_addr, fb_addr + fb_size);
+        fb_region = fb_addr;
+
+        // See if there should be an existing mapping:
+        EFI_MEMORY_DESCRIPTOR *fb_desc = efi_memmap_find(fb_addr, efi_memmap_ptr.get(),
+                memMapSize, memMapDescrSize);
+        if (fb_desc != nullptr) {
+            fb_region = fb_desc->PhysicalStart;
+            fb_size = fb_desc->NumberOfPages * PAGE4KB;
+        }
+
+        do_mapping(fb_region, fb_region, fb_region + fb_size, memory_types::CACHE_WC);
     }
 
     // Now map low half into high half:
@@ -1317,7 +1377,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     }
 
     // And finally map the kernel:
-    do_mapping(lowest_vaddr, kernel_alloc.get_ptr(), kernel_alloc.get_ptr() + kernel_alloc.page_count() * PAGE4KB);
+    do_mapping(lowest_vaddr, kernel_alloc.get_ptr(), kernel_alloc.get_ptr()
+            + kernel_alloc.page_count() * PAGE4KB, memory_types::CACHE_WB);
 
 
     // Build tosaithe protocol memory map from EFI memory map
@@ -1405,8 +1466,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             kernel_alloc.page_count() * PAGE4KB, 0 /* FIXME */);
 
     if (fb_size != 0) {
-        // FIXME if there's an existing MMIO entry replace the whole entry
-        tsbp_memmap.insert_entry(tsbp_mmap_type::FRAMEBUFFER, loader_data.framebuffer_addr, fb_size, 0 /* FIXME */);
+        tsbp_memmap.insert_entry(tsbp_mmap_type::FRAMEBUFFER, fb_region, fb_size, 0 /* FIXME */);
     }
 
     tsbp_memmap.sort();
@@ -1463,8 +1523,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     // Now, put our page tables in place:
 
-    // TODO set up PAT as per memory_type:: enum.
-
     asm volatile (
             "cli\n"
 
@@ -1472,6 +1530,18 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
             //"movq %%cr0, %%rax\n"
             //"andl $0x7FFFFFFF, %%eax\n"
             //"movq %%rax, %%cr0\n"
+
+            // Set up PAT (as per memory_types:: enum)
+            //  0 - 06 - Write-back (WB)
+            //  1 - 04 - Write-throught (WT)
+            //  2 - 07 - Uncached, overridable by MTRRs (UC-)
+            //  3 - 00 - Uncached (UC)
+            //  4 - 05 - Write protected (WP)
+            //  5 - 01 - Write combining (WC)
+            "movl $0x00070406, %%eax\n"
+            "movl $0x00000105, %%edx\n"
+            "movl $0x277, %%ecx\n"  // IA32_PAT
+            "wrmsr\n"
 
             // put our own page tables in place
             "movq %0, %%rax\n"
