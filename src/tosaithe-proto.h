@@ -35,7 +35,13 @@ struct tosaithe_loader_data {
     tsbp_mmap_entry *memmap;
     uint32_t memmap_entries;
 
-    void *   acpi_rdsp;  // ACPI RDSP (Root Data Structure Pointer)
+    void *   acpi_rdsp;  // ACPI RDSP (Root Data Structure Pointer), if known by boot loader
+
+    // EFI info. Following are 0/nullptr if not available:
+
+    void *   efi_memmap; // EFI-firmware provided memory map
+    uint32_t efi_memmap_descr_size;  // size of entries in EFI memory map
+    void *   efi_system_table; // EFI system table
 
     // Framebuffer info
 

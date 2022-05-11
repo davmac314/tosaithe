@@ -593,7 +593,8 @@ void sort_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN memMapSize, UINTN memM
     } while (did_bubble);
 }
 
-// Compact EFI memory map by merging adjacent entries with same type/attributes and adjacent range
+// Compact EFI memory map by merging adjacent entries with same type/attributes and adjacent range.
+// Ranges with EFI_MEMORY_RUNTIME attribute will not be merged.
 void compact_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN &memMapSize, UINTN memMapDescrSize)
 {
     EFI_MEMORY_DESCRIPTOR *end_ent = (EFI_MEMORY_DESCRIPTOR *)
@@ -603,10 +604,12 @@ void compact_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN &memMapSize, UINTN 
     EFI_MEMORY_DESCRIPTOR *scan_ent = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)memmap + memMapDescrSize);
 
     while (scan_ent != end_ent) {
-        // can we merge?
-        // FIXME don't merge runtime memory regions (Attribute has RUNTIME set)
-        //    (SetVirtualMemoryMap requires each runtime region to be specified)
-        if (cur_ent->Type == scan_ent->Type && cur_ent->Attribute == scan_ent->Attribute
+        // Can we merge?
+        // (Note, we don't merge if EFI_MEMORY_RUNTIME is set, since if the kernel wants to use
+        // SetVirtualAddressMap to continue using runtime services it needs to pass the runtime areas
+        // as separate entries in the map).
+        if (cur_ent->Type == scan_ent->Type && !(cur_ent->Attribute & EFI_MEMORY_RUNTIME)
+                && cur_ent->Attribute == scan_ent->Attribute
                 && scan_ent->PhysicalStart == (cur_ent->PhysicalStart + cur_ent->NumberOfPages * PAGE4KB)) {
             cur_ent->NumberOfPages += scan_ent->NumberOfPages;
         }
@@ -755,7 +758,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     unsigned elf_data_enc = elf_hdr->e_ident[EI_DATA];
     if (elf_data_enc != ELFDATA2LSB /* && elf_data_enc != ELFDATA2MSB */) {
         con_write(L"Unsupported ELF data encoding\r\n");
-        // TODO support non-native encoding?
         return EFI_LOAD_ERROR;
     }
 
@@ -1473,6 +1475,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     loader_data.memmap = tsbp_memmap.get();
     loader_data.memmap_entries = tsbp_memmap.get_size();
+
+    loader_data.efi_memmap = efi_memmap_ptr.get();
+    loader_data.efi_memmap_descr_size = memMapDescrSize;
+    loader_data.efi_system_table = EST;
 
     // TODO command line
     // TODO modules
