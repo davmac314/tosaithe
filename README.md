@@ -13,14 +13,19 @@ and will not be supported by the original author. Use it at your own risk.
 I began writing Tosaithe when I was experimenting with writing a "toy" OS kernel. Not being
 satisfied with other alternatives, for various reasons, I decided (in the true spirit of OS
 development) to write one myself. I had originally toyed with the Stivale2 protocol, but would
-prefer something lighter-weight. Stivale2 seems like a good protocol for getting kernels off
-the ground quickly, because it can do lot of setup for you; implementing a complete Stivale2
-loader on the other hand seems like a major undertaking.
+prefer something lighter-weight and had some other minor concerns. Stivale2 seems like a good
+protocol for getting kernels off the ground quickly, because it can do lot of setup for you;
+implementing a complete Stivale2 loader on the other hand seems like a major undertaking.
 
 (There is a partial Stivale2 implementation in the source tree but it is no longer included as
 part of the build. It worked as proof-of-concept for very particular kernels but is nowhere near
 being spec compliant, and I have little personal interest in completing it. If you need a Stivale2
-loader, look for "Limine").
+loader, look for "Limine"; however, even Limine has essentially deprecated Stivale2 and now has
+its own namesake protocol. The new protocol addresses one of the main issues I had with Stivale2 -
+specifically that it required kernel to be loaded at a particular physical address, at least
+before relocation - the Limine protocol instead loads the kernel to an arbitrary physical address
+and maps it to the chosen virtual address, which was a decision already taken in the design of
+Tosaithe).
 
 Tosaithe mainly serves now as:
 
@@ -34,7 +39,14 @@ together provide a C++ runtime and standard library.
 
 ## The Tosaithe boot protocol (TSBP)
 
-To be written...
+To be completed...
+
+Key features:
+
+* Uses ELF format kernels
+* Kernels are loaded at an arbitrary physical address, and mapped into the correct virtual address
+  (according to the program headers)
+* ...
 
 ## Building Tosaithe
 
