@@ -20,6 +20,9 @@ struct tosaithe_entry_header {
     uint32_t version; // protocol version for this structure (= 0)
     uint32_t min_reqd_version; // the minimum required protocol version that loader must support
     uintptr_t stack_ptr; // stack pointer on entry
+    uint32_t flags;  //  bits 1-0:  00 = does not require framebuffer
+                     //             01 = requires framebuffer
+                     //             1x = reserved
 };
 
 // The entry point receives a single argument: a pointer to a tosaithe_loader_data structure
@@ -46,6 +49,7 @@ struct tosaithe_loader_data {
     // Framebuffer info
 
     uintptr_t framebuffer_addr;   // physical address of the framebuffer (0 if none available)
+    uintptr_t framebuffer_size;   // size in bytes of the framebuffer, rounded up to page boundary
     uint16_t framebuffer_width;   // width in pixels
     uint16_t framebuffer_height;  // height in pixels
     uint16_t framebuffer_pitch;   // pitch (bytes per line)

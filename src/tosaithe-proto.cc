@@ -426,12 +426,13 @@ static void *find_config_table(const EFI_GUID &table_id)
 
 // Check whether a usable framebuffer exists, copy relevant info into 'fbinfo' if so
 // and store the framebuffer size (rounded up to page boundary) into '*fb_size'.
-static void check_framebuffer(tosaithe_loader_data *fbinfo, uint64_t *fb_size)
+static void check_framebuffer(tosaithe_loader_data *fbinfo)
 {
     EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
             (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locate_protocol(EFI_graphics_output_protocol_guid);
 
     fbinfo->framebuffer_addr = 0;
+    fbinfo->framebuffer_size = 0;
 
     if (graphics == nullptr) {
         return;
@@ -511,7 +512,7 @@ static void check_framebuffer(tosaithe_loader_data *fbinfo, uint64_t *fb_size)
         break;
     }
     default:
-        return; // without setting *fb_size, i.e. framebuffer not available
+        return; // framebuffer not available
     }
 
     fbinfo->framebuffer_addr = graphics->Mode->FrameBufferBase;
@@ -519,8 +520,7 @@ static void check_framebuffer(tosaithe_loader_data *fbinfo, uint64_t *fb_size)
     fbinfo->framebuffer_height = graphics->Mode->Info->VerticalResolution;
     fbinfo->framebuffer_pitch = graphics->Mode->Info->PixelsPerScanLine
             * ((fbinfo->framebuffer_bpp + 7) / 8u);
-
-    *fb_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
+    fbinfo->framebuffer_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
 }
 
 // Get a copy of the EFI memory map in an allocated buffer. Returns null on general failure or
@@ -1111,7 +1111,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
                     auto page_for_split = (uintptr_t)take_page();
                     pde_ent.entry = page_for_split | 3 /* present/read+write */;
                     PDE *split_page = (PDE *)page_for_split;
-                    // re-create original mapping, will be partially overwritten shortly
+                    // re-create original mapping, will be partially overwritten by caller
                     for (int i = 0; i < 512; i++) {
                         split_page[i] = { orig_phys | 3 | PAT_PCD_PWT_PS_dst };
                         orig_phys += pg_size;
@@ -1122,6 +1122,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
                 // nothing in the entry yet. Allocate:
                 auto pdpt_page = (uintptr_t)take_page();
                 pde_ent.entry = pdpt_page | 3 /* present/read+write */;
+                // (as this is an intermediate page, leave the cache attributes as default)
             }
         };
 
@@ -1355,7 +1356,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     uint64_t fb_size = 0;
     uint64_t fb_region = 0;
-    check_framebuffer(&loader_data, &fb_size);
+    check_framebuffer(&loader_data);
+    fb_size = loader_data.framebuffer_size;
 
     if (fb_size != 0) {
         // Need to map the framebuffer in
