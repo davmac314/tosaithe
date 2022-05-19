@@ -13,6 +13,10 @@ template <typename T> using funcptr64 = T;
 struct tosaithe_loader_data;
 struct tsbp_mmap_entry;
 
+struct tosaithe_hdr_flags {
+    static const int REQ_FRAMEBUFFER = 1;
+};
+
 // Entry header is a static structure which must be at offset 0 within the first segment of the
 // ELF file. Other details (including entry point) are in the ELF metadata.
 struct tosaithe_entry_header {

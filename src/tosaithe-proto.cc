@@ -1375,6 +1375,11 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         do_mapping(fb_region, fb_region, fb_region + fb_size, memory_types::CACHE_WC);
     }
 
+    if (fb_size == 0 && (ts_entry_header->flags & tosaithe_hdr_flags::REQ_FRAMEBUFFER)) {
+        con_write(L"Framebuffer not available but required by kernel\r\n");
+        return EFI_LOAD_ERROR;
+    }
+
     // Now map low half into high half:
     for (int i = 0; i < 256; i++) {
         page_tables[i+256] = page_tables[i];
