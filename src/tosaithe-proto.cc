@@ -833,16 +833,12 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     // bss areas need to be cleared before entry to kernel
     std::vector<bss_area> bss_areas;
 
-    unsigned num_loadable_segs = 0;
-
     // Find the total virtual address span of all segments (lowest_vaddr, highest_vaddr)
     for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
         uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + elf_header_alloc.get_ptr();
         Elf64_Phdr phdr;
         std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
         if (phdr.p_type == PT_LOAD) {
-            num_loadable_segs++; // XXX needed?
-
             // Do some consistency checks while we are at it:
             auto max_addr = std::numeric_limits<decltype(phdr.p_vaddr)>::max();
             if (phdr.p_vaddr > max_addr - phdr.p_memsz) {
@@ -1415,6 +1411,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     retrieve_efi_memmap_2:
 
+    auto efi_attrib_to_tosaithe = [](uint64_t attr) {
+        if (attr & EFI_MEMORY_WB) return tsbp_mmap_flags::CACHE_WB;
+        if (attr & EFI_MEMORY_WT) return tsbp_mmap_flags::CACHE_WT;
+        if (attr & EFI_MEMORY_WC) return tsbp_mmap_flags::CACHE_WC;
+        if (attr & EFI_MEMORY_WP) return tsbp_mmap_flags::CACHE_WP;
+        return tsbp_mmap_flags::CACHE_UC;
+    };
+
     // Copy entries from EFI memory map to our boot protocol map
     auto *efi_mem_iter = efi_memmap_ptr.get();
     auto *efi_mem_end = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_memmap_ptr.get() + memMapSize);
@@ -1462,7 +1466,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         }
 
         tsbp_memmap.add_entry(st_type, efi_mem_iter->PhysicalStart,
-                efi_mem_iter->NumberOfPages * 0x1000u, 0 /* FIXME */);
+                efi_mem_iter->NumberOfPages * 0x1000u, efi_attrib_to_tosaithe(efi_mem_iter->Attribute));
         efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
     }
 
@@ -1472,10 +1476,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     // Insert memory-map entries for kernel
     tsbp_memmap.insert_entry(tsbp_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get_ptr(),
-            kernel_alloc.page_count() * PAGE4KB, 0 /* FIXME */);
+            kernel_alloc.page_count() * PAGE4KB, tsbp_mmap_flags::CACHE_WB);
 
     if (fb_size != 0) {
-        tsbp_memmap.insert_entry(tsbp_mmap_type::FRAMEBUFFER, fb_region, fb_size, 0 /* FIXME */);
+        tsbp_memmap.insert_entry(tsbp_mmap_type::FRAMEBUFFER, fb_region, fb_size, tsbp_mmap_flags::CACHE_WC);
     }
 
     tsbp_memmap.sort();
