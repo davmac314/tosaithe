@@ -1385,6 +1385,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
     do_mapping(lowest_vaddr, kernel_alloc.get_ptr(), kernel_alloc.get_ptr()
             + kernel_alloc.page_count() * PAGE4KB, memory_types::CACHE_WB);
 
+    std::unique_ptr<tsbp_kernel_mapping> tsbp_kernel_map = std::make_unique<tsbp_kernel_mapping>();
+    tsbp_kernel_map->base_phys = kernel_alloc.get_ptr();
+    tsbp_kernel_map->base_virt = lowest_vaddr;
+    tsbp_kernel_map->length = kernel_alloc.page_count() * PAGE4KB;
 
     // Build tosaithe protocol memory map from EFI memory map
 
@@ -1486,6 +1490,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
     loader_data.memmap = tsbp_memmap.get();
     loader_data.memmap_entries = tsbp_memmap.get_size();
+    loader_data.kern_map = tsbp_kernel_map.get();
+    loader_data.kern_map_entries = 1;
 
     loader_data.efi_memmap = efi_memmap_ptr.get();
     loader_data.efi_memmap_descr_size = memMapDescrSize;

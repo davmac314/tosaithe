@@ -12,6 +12,7 @@ template <typename T> using funcptr64 = T;
 
 struct tosaithe_loader_data;
 struct tsbp_mmap_entry;
+struct tsbp_kernel_mapping;
 
 struct tosaithe_hdr_flags {
     static const int REQ_FRAMEBUFFER = 1;
@@ -42,6 +43,9 @@ struct tosaithe_loader_data {
     tsbp_mmap_entry *memmap;
     uint32_t memmap_entries;
 
+    tsbp_kernel_mapping *kern_map;
+    uint32_t kern_map_entries;
+
     void *   acpi_rdsp;  // ACPI RDSP (Root Data Structure Pointer), if known by boot loader
 
     // EFI info. Following are 0/nullptr if not available:
@@ -50,7 +54,7 @@ struct tosaithe_loader_data {
     uint32_t efi_memmap_descr_size;  // size of entries in EFI memory map
     void *   efi_system_table; // EFI system table
 
-    // Framebuffer info
+    // Framebuffer info (addr/size are 0 if not available)
 
     uintptr_t framebuffer_addr;   // physical address of the framebuffer (0 if none available)
     uintptr_t framebuffer_size;   // size in bytes of the framebuffer, rounded up to page boundary
@@ -97,6 +101,13 @@ struct tsbp_mmap_entry {
     uintptr_t length;
     tsbp_mmap_type type;
     uint32_t flags;
+};
+
+// tsbp_kernel_mapping: describes a kernel physical-virtual mapping
+struct tsbp_kernel_mapping {
+    uintptr_t base_phys;
+    uintptr_t base_virt;
+    uintptr_t length;
 };
 
 // Entry point details:
