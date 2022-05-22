@@ -1287,7 +1287,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         auto mmdesc_phys_beg = mmdesc->PhysicalStart;
         auto mmdesc_phys_end = mmdesc->PhysicalStart + mmdesc->NumberOfPages * 4096u;
 
-        if (mmdesc_phys_beg != 0) {
+        if (mmdesc_phys_beg != 0 && mmdesc == efi_memmap_ptr.get()) {
             // Unusual to have nothing mapped at address 0, but let's handle it (we want
             // to ensure the entire first 4GB is mapped regardless of whether there is physical
             // memory present):
