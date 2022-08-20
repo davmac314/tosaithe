@@ -45,9 +45,11 @@ cxxsupport.o: cxxsupport.cc
 # Everything below here is concerned with building disk images and running in QEMU
 
 disk.img: tosaithe.efi
-	rm disk.img
-	echo "Please create disk image (disk.img). On linux use 'make disk.img-linux'"
-	exit 1
+	rm -f disk.img
+	@echo "==="
+	@echo "Please create disk image (disk.img). On linux use 'make disk.img-linux'"
+	@echo "==="
+	@exit 1
 
 # Create "image", a directory used to create a virtual FAT image
 image-dir: tosaithe.efi
@@ -62,7 +64,10 @@ disk.img-linux: tosaithe.efi
 	/sbin/sfdisk disk.img < sfdisk.input # create partition table ("label") and EFI system partition
 	# start=2048 end=93716 sectors=91669
 	/usr/sbin/mkfs.fat -F 32 --offset=2048 -S 512 disk.img $$((91669 * 512 / 1024))
-	mcopy -i disk.img@@1M tosaithe.efi ::/
+	mmd -i disk.img@@1M ::/EFI
+	mmd -i disk.img@@1M ::/EFI/BOOT	
+	mcopy -i disk.img@@1M tosaithe.efi ::/EFI/BOOT/bootx64.efi
+	mcopy -i disk.img@@1M ../doc/tosaithe.conf.example ::/tosaithe.conf
 
 run-in-qemu: image-dir
 	@if [ ! -e OVMF_CODE-pure-efi.fd -o ! -e OVMF_VARS-pure-efi.fd ]; then \
@@ -76,6 +81,18 @@ run-in-qemu: image-dir
 	  -drive file=fat:rw:image,media=disk,format=raw \
 	  -debugcon file:ovmf-debug.log -global isa-debugcon.iobase=0x402
 
+run-disk-img-qemu: disk.img
+	@if [ ! -e OVMF_CODE-pure-efi.fd -o ! -e OVMF_VARS-pure-efi.fd ]; then \
+	    echo "!!! OVMF firmware images are missing; please download them to this directory."; \
+	    exit 1; \
+	fi
+	qemu-system-x86_64 -s \
+	  -drive if=pflash,format=raw,unit=0,file=OVMF_CODE-pure-efi.fd,readonly=on \
+	  -drive if=pflash,format=raw,unit=1,file=OVMF_VARS-pure-efi.fd \
+	  -net none  \
+	  -drive file=disk.img \
+	  -debugcon file:ovmf-debug.log -global isa-debugcon.iobase=0x402
+	
 clean:
 	rm -f main.o tosaithe-proto.o tosaithe.efi.so tosaithe.efi disk.img
 	rm -rf image

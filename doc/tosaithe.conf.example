@@ -1,0 +1,31 @@
+# name {  -- begins object
+# name: -- begins value, may be {...} (object), [...] (list), "value" (string)
+# name:  
+#
+
+entry: {
+    description = 'Linux - with root on /dev/nvme0n1p2'
+    type = linux_chain
+    exec = '\vmlinuz-5.15.37'
+    cmdline = 'linux root=/dev/nvme0n1p2'
+}
+
+entry: {
+    description = 'EFI Shell'
+    type = chain
+    exec = '\EFI\Shell.efi'
+    cmdline = 'Shell.efi'
+}
+
+entry: {
+    description = 'My kernel v0.1'
+    type = tosaithe
+    exec = '\kernel.elf'
+}
+
+entry: {
+    description = 'Limine'
+    type = chain
+    exec = '\limine.efi'
+    cmdline = 'limine.efi'
+}

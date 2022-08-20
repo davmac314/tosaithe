@@ -19,13 +19,8 @@ implementing a complete Stivale2 loader on the other hand seems like a major und
 
 (There is a partial Stivale2 implementation in the source tree but it is no longer included as
 part of the build. It worked as proof-of-concept for very particular kernels but is nowhere near
-being spec compliant, and I have little personal interest in completing it. If you need a Stivale2
-loader, look for "Limine"; however, even Limine has essentially deprecated Stivale2 and now has
-its own namesake protocol. The new protocol addresses one of the main issues I had with Stivale2 -
-specifically that it required kernel to be loaded at a particular physical address, at least
-before relocation - the Limine protocol instead loads the kernel to an arbitrary physical address
-and maps it to the chosen virtual address, which was a decision already taken in the design of
-Tosaithe).
+being spec compliant, and I have little personal interest in completing it. The Stivale2 protocol
+has been deprecated by its author).
 
 Tosaithe mainly serves now as:
 
@@ -87,7 +82,7 @@ entry: {
 
 entry: {
     description = 'My Stivale2 Kernel'
-    type = stivale2
+    type = tosaithe
     exec = '\mykernel.elf'
     cmdline = ''
 }
