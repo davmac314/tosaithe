@@ -58,9 +58,10 @@ configuring if building it yourself).
 ## Installing Tosaithe
 
 Copy `tosaithe.efi` to your EFI system partition. You can copy it over `\EFI\BOOT\bootx64.efi` in
-order to boot with it, but I highly recommend you don't do that until you're sure that it works; copy
-it somewhere else and run it via Grub or the UEFI shell for example. (Check your motherboard manual
-for access to see if UEFI shell access is possible; check web for help using it). 
+order to boot with it (maybe), but I highly recommend you don't do that until you're sure that it
+works; copy it somewhere else and run it via Grub or the UEFI shell for example. (Check your
+motherboard manual for access to see if UEFI shell access is possible; check web for help using
+it). 
 
 You will need a `tosaithe.conf` text file (UTF-8) in the root directory of the same partition. This
 should look something like:
@@ -68,7 +69,7 @@ should look something like:
 ```
 entry: {
     description = 'Linux - 5.10.47'
-    type = chain
+    type = linux-chain
     exec = '\vmlinuz-5.10.47'
     cmdline = 'linux root=/dev/sda1'
 }
@@ -81,7 +82,7 @@ entry: {
 }
 
 entry: {
-    description = 'My Stivale2 Kernel'
+    description = 'My Tosaithe Kernel'
     type = tosaithe
     exec = '\mykernel.elf'
     cmdline = ''
@@ -90,7 +91,9 @@ entry: {
 
 Note that when chaining to an EFI program (when `type = chain`) the command line should include
 the program name as first argument. Paths are on the boot partition (or rather, the partition that
-Tosaithe itself is run from).
+Tosaithe itself is run from). The `linux-chain` type is intended to allow support for loading an
+initial ramdisk (initrd) but that hasn't been implemented (so `linux-chain` and `chain` are the
+same thing for now).
 
 ## Using Tosaithe
 
