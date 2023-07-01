@@ -3,6 +3,9 @@
 #include <memory>
 #include <new>
 
+#include <cstring>
+#include <cstdint>
+
 #include <elf.h>
 
 #include "uefi.h"
@@ -531,41 +534,37 @@ static void check_framebuffer(tosaithe_loader_data *fbinfo)
 //   memMapDescrVersion - will be set to the descriptor version
 EFI_MEMORY_DESCRIPTOR *get_efi_memmap(UINTN &memMapSize, UINTN &memMapKey, UINTN &memMapDescrSize, uint32_t &memMapDescrVersion)
 {
-    EFI_STATUS status = EBS->GetMemoryMap(&memMapSize, nullptr, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-    if (status != EFI_BUFFER_TOO_SMALL) {
-        con_write(L"Error: could not retrieve EFI memory map\r\n");
-        return nullptr;
+    // Ideally we would start with size 0 and null pointer, which should return the needed size.
+    // But the EFI firmware for the ASRock B550 PG Riptide board (bios version L2.71) seems to
+    // handle this case incorrectly and returns EFI_INVALID_PARAMETER instead of EFI_BUFFER_TOO_SMALL.
+    // So instead start with a small fixed-size buffer:
+
+    memMapSize = 16 * sizeof(EFI_MEMORY_DESCRIPTOR);
+    EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
+    if (efiMemMap == nullptr) {
+        throw std::bad_alloc();
     }
 
-    efi_unique_ptr<EFI_MEMORY_DESCRIPTOR> efi_memmap_ptr;
+    EFI_STATUS status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
 
-    {
-        EFI_MEMORY_DESCRIPTOR *efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
-
+    while (status == EFI_BUFFER_TOO_SMALL) {
+        // Above allocation may have increased size of memory map, so we keep trying
+        free_pool(efiMemMap);
+        memMapSize += 4 * memMapDescrSize; // Add a margin for error
+        efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
         if (efiMemMap == nullptr) {
             throw std::bad_alloc();
         }
-
         status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-        while (status == EFI_BUFFER_TOO_SMALL) {
-            // Above allocation may have increased size of memory map, so we keep trying
-            free_pool(efiMemMap);
-            efiMemMap = (EFI_MEMORY_DESCRIPTOR *) alloc_pool(memMapSize);
-            if (efiMemMap == nullptr) {
-                throw std::bad_alloc();
-            }
-            status = EBS->GetMemoryMap(&memMapSize, efiMemMap, &memMapKey, &memMapDescrSize, &memMapDescrVersion);
-        }
-
-        efi_memmap_ptr.reset(efiMemMap);
     }
 
     if (EFI_ERROR(status)) {
         con_write(L"Error: could not retrieve EFI memory map\r\n");
+        free_pool(efiMemMap);
         return nullptr;
     }
 
-    return efi_memmap_ptr.release();
+    return efiMemMap;
 }
 
 // Sort entries in the EFI memory map (by address).
@@ -1536,11 +1535,12 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
                 // If the buffer is too small, we can resize it
                 goto retrieve_efi_memmap;
             }
-            con_write(L"*** Could not retrieve EFI memory map ***\r\n");
+            con_write(L"Error: could not retrieve EFI memory map\r\n");
             return EFI_LOAD_ERROR;
         }
 
-        // we've already got the EFI memory map now, so skip that step and just rebuild the memory map:
+        // we've already got the EFI memory map now, so skip that step and just rebuild the tosaithe memory
+        // map:
         goto retrieve_efi_memmap_2;
     }
 
@@ -1609,7 +1609,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
                 // same time.
 
                     "pushq %[dsseg]\n" // SS
-                    "pushq %1\n"        // RSP
+                    "pushq %1\n"       // RSP
                     "pushfq\n"
                     "pushq %[csseg]\n" // CS
 
