@@ -477,23 +477,67 @@ EfiMain (
 
     conf_buf.reset();
 
+    unsigned entry_offs = 0;
+
+    display_menu:
+
     EFI_con_out->SetAttribute(EFI_con_out, EFI_YELLOW);
     con_write(L"Please make a selection:\r\n\r\n");
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTCYAN);
 
-    unsigned i = 1;
-    for (const auto &entry : menu) {
-        con_write(i);
+    for (unsigned i = 0; i < 10; ++i) {
+        if (i + entry_offs >= menu.size())
+            break;
+
+        // Write 'n' where n is 1 2 3 4 5 6 7 8 9 or 0
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+        if (i != 9) {
+            con_write(i+1);
+        }
+        else {
+            con_write((uint64_t)0);
+        }
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTCYAN);
         con_write(L". ");
+
+        auto &entry = menu[i + entry_offs];
         con_write(entry.description.c_str());
         con_write(L"\r\n");
-        i++;
-
-        if (i == 10) {
-            con_write(L"( too many entries! )\r\n");
-            break;
-        }
     }
+
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTBLUE);
+    con_write(L"\r\n[  ");
+    bool have_nav = false;
+    if (entry_offs + 10 < menu.size()) {
+        // "next"
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+        con_write(L"n");
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+        con_write(L"ext ");
+        have_nav = true;
+    }
+    if (entry_offs > 0) {
+        // "previous"
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+        con_write(L"p");
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+        con_write(L"revious ");
+        have_nav = true;
+    }
+    if (have_nav) {
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTBLUE);
+        con_write(L" |  ");
+    }
+    // "exit"
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+    con_write(L"e");
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+    con_write(L"x");
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+    con_write(L"it  ");
+
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTBLUE);
+    con_write(L"  ]\r\n");
 
     prompt_for_key:
 
@@ -518,13 +562,19 @@ EfiMain (
     con_write(key_str);
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
 
-    if (key_pr.UnicodeChar >= L'1' && key_pr.UnicodeChar <= L'9') {
-        unsigned index = key_pr.UnicodeChar - L'1';
-        if (index >= menu.size()) {
+    if (key_pr.UnicodeChar >= L'0' && key_pr.UnicodeChar <= L'9') {
+        unsigned index;
+        if (key_pr.UnicodeChar == L'0') {
+            index = 10;
+        }
+        else {
+            index = key_pr.UnicodeChar - L'1';
+        }
+        if (index + entry_offs >= menu.size()) {
             con_write(L"Not a valid menu entry.\r\n");
             goto prompt_for_key;
         }
-        const menu_entry &entry = menu[index];
+        const menu_entry &entry = menu[index + entry_offs];
 
         try {
             if (entry.entry_type == menu_entry::CHAIN) {
@@ -538,6 +588,30 @@ EfiMain (
         catch (std::bad_alloc &b) {
             con_write(L"Error: not enough memory.\r\n");
         }
+    }
+    else if (key_pr.UnicodeChar == L'n') {
+        if (entry_offs + 10 < menu.size()) {
+            entry_offs += 10;
+            con_write(L"\r\n\n\n");
+            goto display_menu;
+        }
+        else {
+            con_write(L"No more menu entries.");
+        }
+    }
+    else if (key_pr.UnicodeChar == L'p') {
+        if (entry_offs > 0) {
+            entry_offs -= 10;
+            con_write(L"\r\n\n\n");
+            goto display_menu;
+        }
+        else {
+            con_write(L"No preceding menu entries.");
+        }
+    }
+    else if (key_pr.UnicodeChar == L'x') {
+        con_write(L"\r\n");
+        return EFI_SUCCESS;
     }
     else {
         con_write(L"Not a valid menu entry.\r\n");
