@@ -15,7 +15,7 @@ tosaithe.efi: main.o tosaithe-proto.o cxxsupport.o
 	  --eh-frame-hdr \
 	  -L ../lib -lunwind -lcxxabi -lbmcxx \
 	  -Map=tosaithe.efi.so.map -o tosaithe.efi.so
-	ld --strip-debug -nostdlib -Bsymbolic \
+	ld --strip-all -nostdlib -Bsymbolic \
 	  tosaithe.efi.so \
 	  -T link-elf-efi.lds -Map=tosaithe.efi.map \
 	  -o tosaithe.efi --oformat pei-x86-64 \
