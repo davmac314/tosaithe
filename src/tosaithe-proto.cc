@@ -963,6 +963,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
         }
     }
 
+    kernel_handle.release();
+
     // Check signature
     if (std::memcmp(&ts_entry_header->signature, "TSBP", 4) != 0) {
         con_write(L"Missing Tosaithe boot protocol signature\r\n");
