@@ -130,7 +130,7 @@ public:
         return true;
     }
 
-    // extend allocation (without moving), non-throwing
+    // extend allocation (without moving) by the given number of pages, non-throwing
     bool extend_nx(UINTN num_pages) noexcept
     {
         UINTN origPages = get().second;
@@ -141,6 +141,21 @@ public:
         }
         rezone(get().first, origPages + num_pages);
         return true;
+    }
+
+    // extend allocation by the given number of pages, relocate if necessary,
+    // throws std::bad_alloc on failure
+    void extend_or_move(UINTN num_pages)
+    {
+        if (!extend_nx(num_pages)) {
+            UINTN new_total_pages = get().second + num_pages;
+            EFI_PHYSICAL_ADDRESS new_address;
+            EFI_STATUS status = EBS->AllocatePages(AllocateAnyPages, EfiLoaderCode, new_total_pages, &new_address);
+            if (EFI_ERROR(status)) {
+                throw std::bad_alloc();
+            }
+            reset(std::make_pair(new_address, new_total_pages));
+        }
     }
 
     // change the underlying allocated area, without performing any allocation/free

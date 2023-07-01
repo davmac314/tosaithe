@@ -795,13 +795,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR
 
         // Extend allocation. We can assume current kernel limit is on a page boundary.
         UINTN alloc_pages = (read_amount + 0xFFFu) / 0x1000u;
-        status = EBS->AllocatePages(AllocateAddress, EfiLoaderCode, alloc_pages, &kernel_current_limit);
-        if (EFI_ERROR(status)) {
-            // TODO relocate.
-            throw std::bad_alloc();
-        }
-
-        elf_header_alloc.rezone(elf_header_alloc.get_ptr(), elf_header_alloc.page_count() + alloc_pages);
+        elf_header_alloc.extend_or_move(alloc_pages);
+        elf_hdr = (Elf64_Ehdr *) elf_header_alloc.get_ptr();
 
         status = kernel_handle.read(&read_amount, (void *)(elf_header_alloc.get_ptr() + first_chunk));
         if (EFI_ERROR(status)) {
