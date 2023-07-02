@@ -559,6 +559,12 @@ EfiMain (
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
     con_write(L"it  ");
 
+    // "shutdown"
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+    con_write(L"s");
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+    con_write(L"hutdown  ");
+
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTBLUE);
     con_write(L"]\r\n");
 
@@ -651,6 +657,9 @@ EfiMain (
         else {
             con_write(L"No preceding menu entries.");
         }
+    }
+    else if (key_pr.UnicodeChar == L's') {
+        SystemTable->RuntimeServices->ResetSystem(EfiResetShutdown, EFI_SUCCESS, 0, nullptr);
     }
     else if (key_pr.UnicodeChar == L'x') {
         con_write(L"\r\n");

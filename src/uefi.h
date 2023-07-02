@@ -102,6 +102,9 @@ typedef struct {
     uint64_t                         Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
+typedef enum { // EFI_RESET_TYPE
+    EfiResetCold, EfiResetWarm, EfiResetShutdown, EfiResetPlatformSpecific
+} EFI_RESET_TYPE;
 
 // Forward declarations of some protocols:
 struct _EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
@@ -166,6 +169,8 @@ typedef EFI_STATUS(EFIAPI *EFI_EXIT_BOOT_SERVICES)(IN EFI_HANDLE ImageHandle, IN
 typedef EFI_STATUS(EFIAPI *EFI_LOCATE_PROTOCOL)(const IN EFI_GUID *Protocol,
         IN void *Registration OPTIONAL, OUT void **Interface);
 
+typedef void(EFIAPI *EFI_RESET_SYSTEM)(IN EFI_RESET_TYPE ResetType, IN EFI_STATUS ResetStatus,
+        IN UINTN DataSize, IN void *ResetData OPTIONAL);
 
 // Boot services table
 typedef struct {
@@ -219,13 +224,28 @@ typedef struct {
     void *LocateHandleBuffer;
     EFI_LOCATE_PROTOCOL              LocateProtocol;
 
-
     // XXX not complete
 } EFI_BOOT_SERVICES;
 
-typedef struct {
+// Runtime services table
+typedef struct { // EFI_RUNTIME_SERVICES
     EFI_TABLE_HEADER                 Hdr;
     // XXX not complete
+
+    void *GetTime;
+    void *SetTime;
+    void *GetWakeupTime;
+    void *SetWakeupTime;
+
+    void *SetVirtualAddressMap;
+    void *ConvertPointer;
+
+    void *GetVariable;
+    void *GetNextVariableName;
+    void *SetVariable;
+
+    void *GetNextHighMonotonicCount;
+    EFI_RESET_SYSTEM ResetSystem;
 } EFI_RUNTIME_SERVICES;
 
 typedef struct {
