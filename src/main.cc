@@ -560,7 +560,7 @@ EfiMain (
     con_write(L"it  ");
 
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTBLUE);
-    con_write(L"  ]\r\n");
+    con_write(L"]\r\n");
 
     prompt_for_key:
 
@@ -580,6 +580,9 @@ EfiMain (
     EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
     CHAR16 key_str[4];
     key_str[0] = key_pr.UnicodeChar;
+    if (key_pr.UnicodeChar == 0) {
+        key_str[0] = L'?';
+    }
     key_str[1] = L'\r'; key_str[2] = L'\n';
     key_str[3] = 0;
     con_write(key_str);
@@ -600,13 +603,30 @@ EfiMain (
         const menu_entry &entry = menu[index + entry_offs];
 
         try {
-            if (entry.entry_type == menu_entry::CHAIN) {
-                return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
-            } else if (entry.entry_type == menu_entry::LINUX_CHAIN) {
-                return chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+            if (entry.entry_type == menu_entry::CHAIN || entry.entry_type == menu_entry::LINUX_CHAIN) {
+                EFI_STATUS status = chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+                if (status == EFI_LOAD_ERROR) {
+                    // error message has already been displayed
+                    con_write(L"\r\n");
+                    goto prompt_for_key;
+                }
+                if (status != EFI_SUCCESS) {
+                    con_write(L"\r\nApplication returned error status: 0x");
+                    con_write_hex(status);
+                }
             } else {
-                return load_tsbp(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+                load_tsbp(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+                // if this fails an error message has already been displayed
             }
+            EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+            con_write(L"\r\n\r\nTosaithe");
+            EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+            con_write(L" boot menu - enter selection; [");
+            EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+            con_write(L"space");
+            EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+            con_write(L"] to show menu\r\n");
+            goto prompt_for_key;
         }
         catch (std::bad_alloc &b) {
             con_write(L"Error: not enough memory.\r\n");
@@ -636,8 +656,12 @@ EfiMain (
         con_write(L"\r\n");
         return EFI_SUCCESS;
     }
+    else if (key_pr.UnicodeChar == L' ') {
+        con_write(L"\r\n");
+        goto display_menu;
+    }
     else {
-        con_write(L"Not a valid menu entry.\r\n");
+        con_write(L"Not a valid key/entry (press space to redisplay menu).\r\n");
     }
 
     goto prompt_for_key;
