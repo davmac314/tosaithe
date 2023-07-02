@@ -414,9 +414,32 @@ EfiMain (
 
     EFI_con_out->ClearScreen(EFI_con_out);
 
-    con_write(L"Tosaithe boot menu\r\n");
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+    con_write(L"Tosaithe");
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+    con_write(L" boot menu\r\n");
+
+    auto display_revision = [](uint32_t revision) {
+        unsigned revision_major = revision >> 16;
+        unsigned revision_minor = revision & 0xFFFFu;
+        con_write(revision_major);
+        con_write(L".");
+        con_write(revision_minor);
+    };
+
+    // Some system info:
     con_write(L"Firmware vendor: ");
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTCYAN);
     con_write(SystemTable->FirmwareVendor);
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+    con_write(L"\r\nFirmware revision: ");
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTCYAN);
+    display_revision(SystemTable->FirmwareRevision);
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+    con_write(L"\r\nUEFI revision: ");
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTCYAN);
+    display_revision(SystemTable->Hdr.Revision);
+    EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
     con_write(L"\r\n\r\n");
 
     // for debugging:
