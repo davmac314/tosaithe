@@ -9,9 +9,9 @@ all: tosaithe.efi
 
 # We have to link twice: the first time as ELF, to produce the .eh_frame_hdr section (--eh-frame-hdr).
 # The second time to convert to PEI.
-tosaithe.efi: main.o tosaithe-proto.o cxxsupport.o
+tosaithe.efi: main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o
 	ld -q -nostdlib -Bsymbolic -T link-elf.lds \
-	  main.o tosaithe-proto.o cxxsupport.o \
+	  main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o \
 	  --eh-frame-hdr \
 	  -L ../lib -lunwind -lcxxabi -lbmcxx \
 	  -Map=tosaithe.efi.so.map -o tosaithe.efi.so
@@ -38,6 +38,9 @@ main.o: main.cc
 
 tosaithe-proto.o: tosaithe-proto.cc
 	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c tosaithe-proto.cc
+
+tosaithe-util.o: tosaithe-util.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c tosaithe-util.cc
 
 cxxsupport.o: cxxsupport.cc
 	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c cxxsupport.cc

@@ -304,6 +304,26 @@ inline unsigned find_file_path(const EFI_DEVICE_PATH_PROTOCOL *dp)
     return -1;
 }
 
+class open_file_exception {
+public:
+    enum of_stage {
+        NO_FSPROTOCOL_FOR_DEV_PATH,  // probably does not name a file
+        CANNOT_OPEN_VOLUME,
+        NO_DPTT_PROTOCOL, // firmware lacks DEVICE_PATH_TO_TEXT
+        CANNOT_OPEN_FILE,
+    };
+
+    of_stage reason;
+    EFI_STATUS status = 0;
+
+    open_file_exception(of_stage reason) : reason(reason) { }
+    open_file_exception(of_stage reason, EFI_STATUS status) : reason(reason), status(status) { }
+};
+
+// Open a file, specified via devpath; throws open_file_exception on error, std::bad_alloc if out
+// of memory
+EFI_FILE_PROTOCOL *open_file(const EFI_DEVICE_PATH_PROTOCOL *dev_path);
+
 // Switch out the file path part in a device path for another file path.
 // Returned path should be freed via freePool(...).
 // Params:
