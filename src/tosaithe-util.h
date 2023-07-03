@@ -278,9 +278,8 @@ template <typename T> void swap(T &a, T &b)
     b = temp;
 }
 
-// Find the file path (if any) device node in the device path (it should be the last node
-// before the end-of-instance marker, if present) and return the offset. Return (unsigned)-1
-// if not found.
+// Find the file path (if any) device node in the device path and return the offset.
+// Return (unsigned)-1 if not found.
 inline unsigned find_file_path(const EFI_DEVICE_PATH_PROTOCOL *dp)
 {
     typedef unsigned char byte;
@@ -302,6 +301,36 @@ inline unsigned find_file_path(const EFI_DEVICE_PATH_PROTOCOL *dp)
     }
 
     return -1;
+}
+
+// Find the end-of-device-path node in a device path
+inline unsigned find_devpath_end(const EFI_DEVICE_PATH_PROTOCOL *dp)
+{
+    typedef unsigned char byte;
+    byte *dp_u8_start = (byte *)dp;
+    byte *dp_u8 = dp_u8_start;
+
+    uint8_t dpn_type = dp_u8[0];
+    while(dpn_type != 0x7F) {
+        uint16_t len = dp_u8[2] + (dp_u8[3] << 8);
+        dp_u8 += len;
+        dpn_type = dp_u8[0];
+    }
+
+    return dp_u8 - dp_u8_start;
+}
+
+// Find the total size of a (singular) device path including end node
+inline unsigned find_devpath_size(const EFI_DEVICE_PATH_PROTOCOL *dp)
+{
+    typedef unsigned char byte;
+    byte *dp_u8_start = (byte *)dp;
+    byte *dp_u8 = dp_u8_start;
+
+    unsigned end = find_devpath_end(dp);
+
+    uint16_t len = dp_u8[end + 2] + (dp_u8[end + 3] << 8);
+    return end + len;
 }
 
 class open_file_exception {

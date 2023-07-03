@@ -118,6 +118,24 @@ void *load_entire_file(EFI_DEVICE_PATH_PROTOCOL *dev_path, UINTN *buf_size_ptr)
 
 static EFI_DEVICE_PATH_PROTOCOL *resolve_relative_path(EFI_HANDLE image_handle, const CHAR16 *path)
 {
+    EFI_DEVICE_PATH_FROM_TEXT_PROTOCOL *text2dp_proto =
+            (EFI_DEVICE_PATH_FROM_TEXT_PROTOCOL *)locate_protocol(EFI_device_path_from_text_protocol_guid);
+
+    if (text2dp_proto == nullptr) {
+        con_write(L"EFI_DEVICE_PATH_FROM_TEXT protocol not supported.\r\n");
+        return nullptr;
+    }
+
+    EFI_DEVICE_PATH_PROTOCOL *path_devpath = text2dp_proto->ConvertTextToDevicePath(path);
+
+    // Media (0x4) file path (0x4)
+    if (path_devpath->Type != 0x4 || path_devpath->SubType != 0x04) {
+        // Not a file path, assume it's an absolute device path
+        return path_devpath;
+    }
+
+    // Find our volume device path, resolve relative to that
+
     EFI_DEVICE_PATH_PROTOCOL *image_path = nullptr;
     if (EFI_ERROR(EBS->HandleProtocol(image_handle, &EFI_loaded_image_device_path_protocol_guid,
             (void **)&image_path))) {
@@ -130,10 +148,29 @@ static EFI_DEVICE_PATH_PROTOCOL *resolve_relative_path(EFI_HANDLE image_handle, 
         return nullptr;
     }
 
-    EFI_DEVICE_PATH_PROTOCOL *full_path = switch_path(image_path, path,
-            (strlen(path) + 1) * sizeof(CHAR16));
+    unsigned fp_offs = find_file_path(image_path);
+    if (fp_offs == (unsigned)-1) {
+        con_write(L"Image device path does not appear to refer to filesystem.\r\n");
+        return nullptr;
+    }
 
-    return full_path;
+    unsigned path_devpath_sz = find_devpath_size(path_devpath);
+
+    // need to reallocate
+    EFI_DEVICE_PATH_PROTOCOL *new_devpath =
+            (EFI_DEVICE_PATH_PROTOCOL *) alloc_pool(fp_offs + path_devpath_sz);
+    if (new_devpath == nullptr) {
+        throw std::bad_alloc();
+    }
+
+    // Copy original path, up to where file path begins
+    memcpy(new_devpath, image_path, fp_offs);
+    // Append new file path
+    memcpy((char *)new_devpath + fp_offs, path_devpath, path_devpath_sz);
+
+    free_pool(path_devpath);
+
+    return new_devpath;
 }
 
 static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, const CHAR16 *cmdline)
