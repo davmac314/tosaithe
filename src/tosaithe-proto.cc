@@ -332,69 +332,32 @@ static const CHAR16 * const OPEN_KERNEL_ERR_FILEOPEN = L"cannot open file";
 
 // Open a kernel file for reading, return true if successful.
 // Throws: std::bad_alloc
-static bool open_kernel_file(EFI_HANDLE image_handle, const CHAR16 *exec_path,
+static bool open_kernel_file(EFI_HANDLE image_handle, const EFI_DEVICE_PATH_PROTOCOL *exec_path,
         EFI_FILE_PROTOCOL **kernel_file_p, UINTN *kernel_file_size_p)
 {
-    EFI_LOADED_IMAGE_PROTOCOL *image_proto;
-    EFI_STATUS status = EBS->HandleProtocol(image_handle,
-            &EFI_loaded_image_protocol_guid, (void **)&image_proto);
-    // status must be EFI_SUCCESS?
-    (void)status;
-
+    efi_file_handle kernel_file_hndl;
     const CHAR16 * errmsg;
 
+    try {
+        kernel_file_hndl.reset(open_file(exec_path));
+    }
+    catch (open_file_exception &ofe) {
+        if (ofe.status == open_file_exception::CANNOT_OPEN_FILE) {
+            errmsg = OPEN_KERNEL_ERR_FILEOPEN;
+        }
+        else if (ofe.status == open_file_exception::CANNOT_OPEN_VOLUME) {
+            errmsg = OPEN_KERNEL_ERR_VOLUME;
+        }
+        else if (ofe.status == open_file_exception::NO_DPTT_PROTOCOL) {
+            errmsg = OPEN_KERNEL_ERR_FIRMWARE;
+        }
+        else /* if (ofe.status == open_file_exception::NO_FSPROTOCOL_FOR_DEV_PATH) */ {
+            errmsg = OPEN_KERNEL_ERR_FILEOPEN;
+        }
+        goto error_out;
+    }
+
     {
-        EFI_DEVICE_PATH_PROTOCOL *image_device_path = nullptr;
-        if (EBS->HandleProtocol(image_handle, &EFI_loaded_image_device_path_protocol_guid,
-                (void **)&image_device_path) != EFI_SUCCESS) {
-            // this support is mandatory...
-            errmsg = OPEN_KERNEL_ERR_FIRMWARE; goto error_out;
-        }
-
-        if (image_device_path == nullptr) {
-            errmsg = OPEN_KERNEL_ERR_FIRMWARE; goto error_out;
-        }
-
-        unsigned exec_path_size = (strlen(exec_path) + 1) * sizeof(CHAR16);
-        efi_unique_ptr<EFI_DEVICE_PATH_PROTOCOL> kernel_path
-                { switch_path(image_device_path, exec_path, exec_path_size) };
-
-        // Try to load the kernel now
-        EFI_HANDLE loadDevice;
-
-        auto *remaining_path = kernel_path.get();
-        status = EBS->LocateDevicePath(&EFI_simple_file_system_protocol_guid, &remaining_path, &loadDevice);
-        kernel_path = nullptr;
-        if (EFI_ERROR(status)) {
-            errmsg = OPEN_KERNEL_ERR_FIRMWARE; goto error_out;
-        }
-
-        EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *sfs_protocol = nullptr;
-
-        status = EBS->HandleProtocol(loadDevice, &EFI_simple_file_system_protocol_guid,
-                (void **)&sfs_protocol);
-        if (EFI_ERROR(status) || (sfs_protocol == nullptr /* firmware misbehaving */)) {
-            errmsg = OPEN_KERNEL_ERR_FIRMWARE; goto error_out;
-        }
-
-        EFI_FILE_PROTOCOL *fs_root = nullptr;
-        status = sfs_protocol->OpenVolume(sfs_protocol, &fs_root);
-        if (EFI_ERROR(status) || (fs_root == nullptr /* firmware misbehaving */)) {
-            errmsg = OPEN_KERNEL_ERR_VOLUME; goto error_out;
-        }
-
-        efi_file_handle kernel_file_hndl;
-        {
-            EFI_FILE_PROTOCOL *kernel_file = nullptr;
-            status = fs_root->Open(fs_root, &kernel_file, exec_path, EFI_FILE_MODE_READ, 0);
-            fs_root->Close(fs_root);
-            if (EFI_ERROR(status) || kernel_file == nullptr) {
-                errmsg = OPEN_KERNEL_ERR_FILEOPEN; goto error_out;
-            }
-
-            kernel_file_hndl.reset(kernel_file);
-        }
-
         EFI_FILE_INFO *kernel_file_info = get_file_info(kernel_file_hndl.get());
         if (kernel_file_info == nullptr) {
             errmsg = OPEN_KERNEL_ERR_FILEOPEN; goto error_out;
@@ -647,7 +610,7 @@ EFI_MEMORY_DESCRIPTOR *efi_memmap_find(UINTN addr, EFI_MEMORY_DESCRIPTOR *memmap
 }
 
 // Load a kernel via the TSBP (ToSaithe Boot Protocol)
-EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine)
+EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path, const CHAR16 *cmdLine)
 {
     efi_file_handle kernel_handle;
     UINTN kernel_file_size;

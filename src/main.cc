@@ -208,7 +208,8 @@ static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, c
     return status;
 }
 
-EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const CHAR16 *exec_path, const CHAR16 *cmdLine);
+EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path,
+        const CHAR16 *cmdLine);
 
 struct menu_entry {
     enum entry_type_t {
@@ -658,8 +659,12 @@ EfiMain (
                     con_write_hex(status);
                 }
             } else {
-                load_tsbp(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
-                // if this fails an error message has already been displayed
+                EFI_DEVICE_PATH_PROTOCOL *kernel_devpath = resolve_relative_path(ImageHandle,
+                        entry.exec_path.c_str());
+                if (kernel_devpath != nullptr) {
+                    load_tsbp(ImageHandle, kernel_devpath, entry.cmdline.c_str());
+                    // if this fails an error message has already been displayed
+                }
             }
             EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
             con_write(L"\r\n\r\nTosaithe");
