@@ -613,7 +613,7 @@ EFI_MEMORY_DESCRIPTOR *efi_memmap_find(UINTN addr, EFI_MEMORY_DESCRIPTOR *memmap
 EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path, const CHAR16 *cmdLine)
 {
     efi_file_handle kernel_handle;
-    UINTN kernel_file_size;
+    UINTN kernel_file_size = 0;
     {
         EFI_FILE_PROTOCOL *kernel_file;
         if (!open_kernel_file(ImageHandle, exec_path, &kernel_file, &kernel_file_size)) {
