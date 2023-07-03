@@ -101,4 +101,6 @@ When Tosaithe runs it reads the configuration file, prints a banner and lists th
 order. The entries are numbered and to select an entry you press the corresponding number on the
 keyboard.
 
-This is of course very limited - it only properly supports up to 9 entries.
+Use the 'n' and 'p' to navigate to the next and previous page, respectively, if there are more
+than 10 entries in the menu. Use 'x' to exit Tosaithe, 's' to shut down the system. Press space
+to refresh the display of menu items.
