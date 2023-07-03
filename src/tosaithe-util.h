@@ -16,10 +16,6 @@ inline void *locate_protocol(const EFI_GUID &guid)
     void *interfacePtr = nullptr;
 
     if (EBS->Hdr.Revision >= 0x110) {
-        // Note, we fallback if this is not available to searching for a handle which provides
-        // the protocol. But that doesn't seem to work with current OVMF, in that LocateHandle
-        // returns success with 1 handle, but that 1 handle is null :(
-        // Anyway, this should work...
         EBS->LocateProtocol(&guid, nullptr, &interfacePtr);
         return interfacePtr;
     }
