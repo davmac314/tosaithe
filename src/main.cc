@@ -468,11 +468,7 @@ EfiMain (
     efi_unique_ptr<char> conf_buf;
     UINTN conf_size;
 
-    try {
-        conf_buf = efi_unique_ptr_wrap((char *) load_entire_file(conf_path.get(), &conf_size));
-    }
-    catch (load_file_exception &lfe) {
-        con_write(L"Could not load 'tosaithe.conf'");
+    auto explain_load_file_failure = [](const load_file_exception &lfe) {
         if (lfe.reason == load_file_exception::CANNOT_OPEN_FILE) {
             con_write(L" - can't open; ");
             if (lfe.status == EFI_NOT_FOUND) {
@@ -487,6 +483,14 @@ EfiMain (
         else {
             con_write(L" - system error.");
         }
+    };
+
+    try {
+        conf_buf = efi_unique_ptr_wrap((char *) load_entire_file(conf_path.get(), &conf_size));
+    }
+    catch (load_file_exception &lfe) {
+        con_write(L"Could not load 'tosaithe.conf'");
+        explain_load_file_failure(lfe);
         con_write(L"\r\n");
         return EFI_LOAD_ERROR;
     }
