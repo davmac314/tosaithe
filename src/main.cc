@@ -171,6 +171,16 @@ static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, c
     status = EBS->HandleProtocol(loaded_handle, &EFI_loaded_image_protocol_guid,
             (void **)&chained_image_LIP);
 
+    // Note that the UEFI spec is *fantastically* vague about what "LoadOptions" should really contain.
+    // It's supposedly *binary* data, but the EFI shell uses it to pass the command line to any application
+    // it runs (including the command name). If started as part of a boot option the data is just taken
+    // from the EFI variable which defines the boot option (this is vaguely explained in the "Boot Manager"
+    // chapter of the UEFI spec). Linux expects it to be a command line *without* a command name (i.e. is
+    // inconsistent with what the EFI shell provides).
+    //
+    // In absence of cohesion and sanity in the rest of the world, then, we'll just pass the command line
+    // exactly as it was provided by the user (i.e. not necessarily with the command name as part of the
+    // command line).
     chained_image_LIP->LoadOptions = (void *)cmdline;
     chained_image_LIP->LoadOptionsSize = (strlen(cmdline) + 1) * sizeof(CHAR16);
 
