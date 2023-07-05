@@ -195,7 +195,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 struct menu_entry {
     enum entry_type_t {
         CHAIN,
-        LINUX_CHAIN,
         TOSAITHE
     };
 
@@ -359,9 +358,6 @@ menu_entry parse_entry(std::string_view &conf)
             else if (ident == "type") {
                 if (value == L"chain") {
                     entry.entry_type = menu_entry::CHAIN;
-                }
-                else if (value == L"linux_chain") {
-                    entry.entry_type = menu_entry::LINUX_CHAIN;
                 }
                 else if (value == L"tosaithe") {
                     entry.entry_type = menu_entry::TOSAITHE;
@@ -632,7 +628,7 @@ EfiMain (
         const menu_entry &entry = menu[index + entry_offs];
 
         try {
-            if (entry.entry_type == menu_entry::CHAIN || entry.entry_type == menu_entry::LINUX_CHAIN) {
+            if (entry.entry_type == menu_entry::CHAIN) {
                 EFI_STATUS status = chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
                 if (status == EFI_LOAD_ERROR) {
                     // error message has already been displayed

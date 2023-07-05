@@ -4,8 +4,8 @@
 (it somewhat works, but is not complete).
 
 Tosaithe is a minimalistic UEFI-firmware menu/bootloader. It can chain-load other EFI programs
-and loaders, including Linux kernels, and has basic support for a bespoke boot protocol (the
-"Tosaithe boot protocol" or "TSBP"). It is currently x86-64 only.
+and loaders, including Linux kernels, and has basic support for a bespoke boot protocol and
+kernel image format (the "Tosaithe boot protocol" or "TSBP"). It is currently x86-64 only.
 
 This is free software, with as few restrictions as legally possible. It comes with no warranty
 and will not be supported by the original author. Use it at your own risk.
@@ -24,7 +24,7 @@ has been deprecated by its author).
 
 Tosaithe mainly serves now as:
 
-* An example UEFI bootloader
+* An example UEFI bootloader / boot menu
 * ... written in C++, exceptions and all
 * ... that can be built using standard Linux toolchain (GCC and GNU binutils)
 * ... that doesn't require EDK II or GNU-EFI
@@ -69,9 +69,9 @@ should look something like:
 ```
 entry: {
     description = 'Linux - 5.10.47'
-    type = linux-chain
-    exec = '\vmlinuz-5.10.47'
-    cmdline = 'linux root=/dev/sda1'
+    type = chain
+    exec = '\linux-5.10.47'
+    cmdline = 'root=/dev/sda1 initrd=initrd.img'
 }
 
 entry: {
@@ -91,9 +91,7 @@ entry: {
 
 Note that when chaining to an EFI program (when `type = chain`) the command line should include
 the program name as first argument. Paths are on the boot partition (or rather, the partition that
-Tosaithe itself is run from). The `linux-chain` type is intended to allow support for loading an
-initial ramdisk (initrd) but that hasn't been implemented (so `linux-chain` and `chain` are the
-same thing for now).
+Tosaithe itself is run from).
 
 ## Using Tosaithe
 
