@@ -51,7 +51,8 @@ PE+ output format support. Binutils must have been built with appropriate suppor
 the case with distro-provided Binutils, use `--enable-targets=x86_64-none-pe,x86_64-none-pep` when
 configuring if building it yourself).
 
-1. `sh clone-libs.sh` to clone the dependencies
+1. `sh clone-libs.sh` or `sh clone-libs.sh https` to clone the dependencies. Use the latter to
+    clone via https, which avoids needing to have your ssh public key enrolled with Github.
 2. `sh rebuild-libs.sh` to build the dependencies (in-tree)
 3. `make` to build Tosaithe.
 
