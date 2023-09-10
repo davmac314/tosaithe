@@ -646,7 +646,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     //   same for all segments
 
     bool found_loadable = false;
-    uintptr_t file_voffs = 0;
     uintptr_t lowest_vaddr = 0;
     uintptr_t highest_vaddr = 0;
     uintptr_t seg_alignment = 0;
@@ -689,23 +688,16 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                 return EFI_LOAD_ERROR;
             }
 
-            uintptr_t voffs = phdr.p_vaddr - phdr.p_offset;
-
             auto vaddr = phdr.p_vaddr;
             auto vaddr_high = vaddr + phdr.p_memsz;
 
             if (!found_loadable) {
-                file_voffs = voffs;
                 lowest_vaddr = vaddr;
                 highest_vaddr = vaddr_high;
                 seg_alignment = phdr.p_align;
                 found_loadable = true;
             }
             else {
-                if (file_voffs != voffs) {
-                    con_write(L"Error: unsupported ELF structure\r\n");
-                    return EFI_LOAD_ERROR;
-                }
                 if (phdr.p_align != seg_alignment) {
                     con_write(L"Error: unsupported ELF structure\r\n");
                     return EFI_LOAD_ERROR;
@@ -763,6 +755,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
 
     // Actually load kernel (read from disk into memory).
+
+    // Go through each segment (identified by program header) and relevant portion of the file
+    // into the kernel image area.
 
     // TODO if we have first_chunk containing a portion of a segment, copy from the
     // header allocation instead of re-reading.
