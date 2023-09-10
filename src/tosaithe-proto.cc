@@ -777,9 +777,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             uintptr_t addr_offs = phdr.p_vaddr - lowest_vaddr;
             status = kernel_handle.seek(phdr.p_offset);
             if (!EFI_ERROR(status)) {
+                read_amount = phdr.p_filesz;
                 status = kernel_handle.read(&read_amount, (void *)(kernel_alloc.get_ptr() + addr_offs));
             }
-            if (EFI_ERROR(status)) {
+            if (EFI_ERROR(status) || (read_amount != phdr.p_filesz)) {
                 con_write(L"Error: couldn't read kernel file\r\n");
                 return EFI_LOAD_ERROR;
             }
