@@ -759,9 +759,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     // Go through each segment (identified by program header) and relevant portion of the file
     // into the kernel image area.
 
-    // TODO if we have first_chunk containing a portion of a segment, copy from the
-    // header allocation instead of re-reading.
-
     tosaithe_entry_header *ts_entry_header = nullptr;
 
     for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
@@ -770,16 +767,47 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
         if (phdr.p_type == PT_LOAD) {
             uintptr_t addr_offs = phdr.p_vaddr - lowest_vaddr;
-            status = kernel_handle.seek(phdr.p_offset);
-            if (!EFI_ERROR(status)) {
-                read_amount = phdr.p_filesz;
-                status = kernel_handle.read(&read_amount, (void *)(kernel_alloc.get_ptr() + addr_offs));
+            bool do_file_read = true;
+            UINTN seek_pos;
+            UINTN amount_to_read;
+            void *read_to_addr;
+
+            // We already have read a decent chunk when we read the ELF header (an amount given by
+            // first_chunk). If that covers the segments portion of the file, or part of it, copy
+            // from the header rather than re-reading the file:
+            if (phdr.p_offset < first_chunk) {
+                // copy from our initial read rather than re-reading
+                auto copy_size = std::min(first_chunk - phdr.p_offset, phdr.p_filesz);
+                memcpy((void *)(kernel_alloc.get_ptr() + addr_offs), ((char *)elf_hdr) + phdr.p_offset, copy_size);
+                if (copy_size == phdr.p_filesz) {
+                    do_file_read = false;
+                }
+                else {
+                    seek_pos = phdr.p_offset + copy_size;
+                    amount_to_read = phdr.p_filesz - copy_size;
+                    read_to_addr = (void *)(kernel_alloc.get_ptr() + addr_offs + copy_size);
+                }
             }
-            if (EFI_ERROR(status) || (read_amount != phdr.p_filesz)) {
-                con_write(L"Error: couldn't read kernel file\r\n");
-                return EFI_LOAD_ERROR;
+            else {
+                seek_pos = phdr.p_offset;
+                amount_to_read = phdr.p_filesz;
+                read_to_addr = (void *)(kernel_alloc.get_ptr() + addr_offs);
             }
 
+            // Read any portion of the segment that we didn't copy from the header chunk:
+            if (do_file_read) {
+                status = kernel_handle.seek(seek_pos);
+                if (!EFI_ERROR(status)) {
+                    read_amount = amount_to_read;
+                    status = kernel_handle.read(&read_amount, read_to_addr);
+                }
+                if (EFI_ERROR(status) || (read_amount != amount_to_read)) {
+                    con_write(L"Error: couldn't read kernel file\r\n");
+                    return EFI_LOAD_ERROR;
+                }
+            }
+
+            // We find the tosaithe entry header at the beginning of the first segment:
             if (ts_entry_header == nullptr) {
                 ts_entry_header = (tosaithe_entry_header *)(kernel_alloc.get_ptr() + addr_offs);
             }
