@@ -1393,16 +1393,19 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         case EfiReservedMemoryType:
             st_type = tsbp_mmap_type::RESERVED;
             break;
-        case EfiLoaderCode:
         case EfiLoaderData:
         case EfiBootServicesCode:
         case EfiBootServicesData:
+            // TODO: we don't really need all EfiLoaderData to be marked reclaimable; the majority
+            // is probably USABLE. Only memory that is specifically made available to the kernel
+            // needs to be marked RECLAIMABLE.
             st_type = tsbp_mmap_type::BOOTLOADER_RECLAIMABLE;
             break;
         case EfiRuntimeServicesCode:
         case EfiRuntimeServicesData:
             st_type = tsbp_mmap_type::RESERVED;
             break;
+        case EfiLoaderCode:
         case EfiConventionalMemory:
             st_type = tsbp_mmap_type::USABLE;
             break;
