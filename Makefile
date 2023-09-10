@@ -20,11 +20,15 @@ CC=gcc
 LIBBMCXX_CPPFLAGS ::= -isysroot $(TOPDIR)/dummy-sysroot
 LIBBMCXX_CXXPPFLAGS ::= -isysroot $(TOPDIR)/dummy-sysroot -nostdinc++
 CPPFLAGS ::= -isysroot $(TOPDIR)/dummy-sysroot -isystem "$(TOPDIR)/libbmcxx/include"
-CXXPPFLAGS ::= -isysroot $(TOPDIR)/dummy-sysroot -nostdinc++ -isystem /home/davmac/prog/libbmcxx/include -I $(TOPDIR)/include
+CXXPPFLAGS ::= -isysroot $(TOPDIR)/dummy-sysroot -nostdinc++ -isystem $(TOPDIR)/libbmcxx/include -I $(TOPDIR)/include
 
 export EFICFLAGS CXXFLAGS CXXPPFLAGS CXX
 
 all:
+	@if [ ! -e lib/libcxxabi.a ]; then \
+	    echo "*** libcxxabi.a not present, did you run ./rebuild-libs.sh?"; \
+	    exit 1; \
+	fi
 	$(MAKE) -C src all
 
 lib/libcxxabi.a:
