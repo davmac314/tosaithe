@@ -925,12 +925,37 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     PDE *page_tables = (PDE *)take_page();
 
+    // Check availability of 1GB pages:
+    // CPUID.80000001H:EDX.Page1GB [bit 26]
+    bool have_1gb_pages = false;
+
+    // First check if we can use 80000001h (we'll assume we have CPUID since it's been supported
+    // even since the later 80486's):
+    uint32_t cpuid_eax;
+    uint32_t cpuid_edx;
+    asm volatile (
+            "movl $0x80000000, %%eax\n"
+            "cpuid\n"
+            : "=a"(cpuid_eax), "=d"(cpuid_edx) :  : "rbx", "rcx"
+    );
+    if (cpuid_eax >= 0x80000001) {
+        // Ok, we can use CPUID.80000001H: do so
+        asm volatile (
+                "movl $0x80000001, %%eax\n"
+                "cpuid\n"
+                : "=a"(cpuid_eax), "=d"(cpuid_edx) :  : "rbx", "rcx"
+        );
+
+        if ((cpuid_edx & (1u << 26)) != 0) {
+            // 1GB pages are supported.
+            have_1gb_pages = true;
+        }
+    }
+
     // Create page mapping for a region
     auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end, memory_types mem_type) {
-        // FIXME don't assume availability of 1GB pages
-
         uintptr_t virt_phys_diff = virt_addr - phys_addr_beg;
-        bool use_1gb_pages = (virt_phys_diff & (PAGE1GB - 1)) == 0;
+        bool use_1gb_pages = have_1gb_pages ? ((virt_phys_diff & (PAGE1GB - 1)) == 0) : false;
         bool use_2mb_pages = (virt_phys_diff & (PAGE2MB - 1)) == 0;
 
         // PWT = bit 3
