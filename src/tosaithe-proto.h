@@ -2,7 +2,6 @@
 #define INCLUDED_TOSAITHE_PROTO_H 1
 
 // Tosaithe boot protocol definitions.
-// This may show influence from Stivale2, but is a much simpler protocol.
 
 #include <cstdint>
 
