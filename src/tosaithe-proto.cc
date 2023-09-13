@@ -431,6 +431,7 @@ void compact_efi_memmap(EFI_MEMORY_DESCRIPTOR *memmap, UINTN &memMapSize, UINTN 
     EFI_MEMORY_DESCRIPTOR *end_ent = (EFI_MEMORY_DESCRIPTOR *)
             ((uintptr_t)memmap + memMapSize);
 
+    // set cur_ent -> first entry, scan_ent -> second entry:
     EFI_MEMORY_DESCRIPTOR *cur_ent = memmap;
     EFI_MEMORY_DESCRIPTOR *scan_ent = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)memmap + memMapDescrSize);
 
@@ -1348,8 +1349,41 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             st_type = tsbp_mmap_type::RESERVED;
         }
 
-        tsbp_memmap.add_entry(st_type, efi_mem_iter->PhysicalStart,
-                efi_mem_iter->NumberOfPages * 0x1000u, efi_attrib_to_tosaithe(efi_mem_iter->Attribute));
+        uint64_t number_of_pages = efi_mem_iter->NumberOfPages;
+        EFI_PHYSICAL_ADDRESS physical_start = efi_mem_iter->PhysicalStart;
+
+        // Merge BOOTLOADER_RECLAIMABLE sections (there will be separate for code and data, but
+        // this distinction is totally unimportant):
+        if (st_type == tsbp_mmap_type::BOOTLOADER_RECLAIMABLE) {
+            auto efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
+            while (efi_mem_next < efi_mem_end) {
+                if (efi_mem_next->Type != EfiBootServicesCode && efi_mem_next->Type != EfiBootServicesData)
+                    break;
+                if (efi_mem_next->Attribute != efi_mem_iter->Attribute)
+                    break;
+                efi_mem_iter = efi_mem_next;
+                number_of_pages += efi_mem_iter->NumberOfPages;
+                efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
+            }
+        }
+        // Similarly, merge various RESERVED sections
+        else if (st_type == tsbp_mmap_type::RESERVED) {
+            auto efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
+            while (efi_mem_next < efi_mem_end) {
+                if (efi_mem_next->Type != EfiRuntimeServicesCode && efi_mem_next->Type != EfiRuntimeServicesData
+                        && efi_mem_next->Type != EfiMemoryMappedIO && efi_mem_next->Type != EfiMemoryMappedIOPortSpace
+                        && efi_mem_next->Type != EfiPalCode)
+                    break;
+                if (efi_mem_next->Attribute != efi_mem_iter->Attribute)
+                    break;
+                efi_mem_iter = efi_mem_next;
+                number_of_pages += efi_mem_iter->NumberOfPages;
+                efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
+            }
+        }
+
+        tsbp_memmap.add_entry(st_type, physical_start, number_of_pages * 0x1000u,
+                efi_attrib_to_tosaithe(efi_mem_iter->Attribute));
         efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
     }
 
