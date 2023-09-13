@@ -50,7 +50,8 @@ struct tosaithe_loader_data {
     // EFI info. Following are 0/nullptr if not available:
 
     void *   efi_memmap; // EFI-firmware provided memory map
-    uint32_t efi_memmap_descr_size;  // size of entries in EFI memory map
+    uint32_t efi_memmap_descr_size;  // size of each entry in EFI memory map (in bytes)
+    uint32_t efi_memmap_size;        // size of the complete EFI memory map (in bytes)
     void *   efi_system_table; // EFI system table
 
     // Framebuffer info (addr/size are 0 if not available)

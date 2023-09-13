@@ -1374,6 +1374,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     loader_data.efi_memmap = efi_memmap_ptr.get();
     loader_data.efi_memmap_descr_size = memMapDescrSize;
+    loader_data.efi_memmap_size = memMapSize;
     loader_data.efi_system_table = EST;
 
     // TODO command line
