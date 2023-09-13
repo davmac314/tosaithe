@@ -72,11 +72,12 @@ struct tosaithe_loader_data {
 };
 
 enum class tsbp_mmap_type : uint32_t {
-    USABLE                 = 1,
-    RESERVED               = 2,
-    ACPI_RECLAIMABLE       = 3,  // stores ACPI tables/data
-    ACPI_NVS               = 4,
-    BAD_MEMORY             = 5,
+    USABLE                 = 0,
+    RESERVED               = 1,
+    ACPI_RECLAIMABLE       = 2,  // stores ACPI tables/data
+    ACPI_NVS               = 3,  // reserved for (ACPI) firmware use
+    BAD_MEMORY             = 4,
+    PERSISTENT_MEMORY      = 5,  // persistent; precise meaning/use is system-dependent
     BOOTLOADER_RECLAIMABLE = 0x1000, // tosaithe loader data structure, memory map, command line, etc
     KERNEL_AND_MODULES     = 0x1001,
     FRAMEBUFFER            = 0x1002

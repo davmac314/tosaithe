@@ -1342,8 +1342,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             st_type = tsbp_mmap_type::RESERVED;
             break;
         case EfiPersistentMemory:
-            // Not really clear how this should be handled.
-            st_type = tsbp_mmap_type::RESERVED;
+            st_type = tsbp_mmap_type::PERSISTENT_MEMORY;
             break;
         default:
             st_type = tsbp_mmap_type::RESERVED;
