@@ -39,7 +39,7 @@ inline void *locate_protocol(const EFI_GUID &guid)
 inline void *alloc_pool(unsigned size)
 {
     void *allocdBuf;
-    EFI_STATUS status = EBS->AllocatePool(EfiLoaderCode, size, &allocdBuf);
+    EFI_STATUS status = EBS->AllocatePool(EfiLoaderData, size, &allocdBuf);
     if (EFI_ERROR(status)) {
         return nullptr;
     }
