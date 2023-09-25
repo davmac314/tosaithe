@@ -12,15 +12,8 @@ and will not be supported by the original author. Use it at your own risk.
 
 I began writing Tosaithe when I was experimenting with writing a "toy" OS kernel. Not being
 satisfied with other alternatives, for various reasons, I decided (in the true spirit of OS
-development) to write one myself. I had originally toyed with the Stivale2 protocol, but would
-prefer something lighter-weight and had some other minor concerns. Stivale2 seems like a good
-protocol for getting kernels off the ground quickly, because it can do lot of setup for you;
-implementing a complete Stivale2 loader on the other hand seems like a major undertaking.
-
-(There is a partial Stivale2 implementation in the source tree but it is no longer included as
-part of the build. It worked as proof-of-concept for very particular kernels but is nowhere near
-being spec compliant, and I have little personal interest in completing it. The Stivale2 protocol
-has been deprecated by its author).
+development) to write one myself. Other bootloaders available at the time did not fit my
+requirements. 
 
 Tosaithe mainly serves now as:
 
@@ -45,8 +38,8 @@ Key features:
 
 ## Building Tosaithe
 
-Requires GCC and Binutils (may or may not work with Clang/LLVM/LLD). I have built with GCC 9.4.0
-and Binutils 2.37. I recommend not trying to use older Binutils as there have been bugs with the
+Requires GCC and Binutils (may or may not work with Clang/LLVM/LLD). I have built with GCC 11.4.0
+and Binutils 2.39. I recommend not trying to use older Binutils as there have been bugs with the
 PE+ output format support. Binutils must have been built with appropriate support (this is usually
 the case with distro-provided Binutils, use `--enable-targets=x86_64-none-pe,x86_64-none-pep` when
 configuring if building it yourself).
