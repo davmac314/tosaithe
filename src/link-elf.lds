@@ -1,5 +1,13 @@
 ENTRY(EfiMain)
 
+/**
+ * This is a GNU linker script designed for production of an ELF-format executable, complete
+ * with exception tables/headers, suitable for conversion to PE format and execution in a
+ * UEFI environment.
+ *
+ * See also the companion script, link-efi-efi.lds.
+ */
+
 SECTIONS {
 
     /* We'll start .text at the 4kb mark and align later sections on a 4kb
@@ -49,10 +57,9 @@ SECTIONS {
     }
 
     /* Debug sections: */
-    /* .debug_info .debug_abbrev .debug_loc .debug_aranges .debug_line .debug_macinfo .debug_str */
 
-    /* Unfortunately, this does not work. You must use --strip-debug at link time or binutils
-     * produces a binary that OVMF (at least) refuses to load. */
+    /* Unfortunately, these cannot be retained in the PE format image. You must use --strip-debug
+     * at link time or binutils produces a binary that OVMF (at least) refuses to load. */
 
     . = ALIGN(0x1000);
 
