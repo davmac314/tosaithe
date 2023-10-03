@@ -10,31 +10,6 @@
 extern EFI_BOOT_SERVICES *EBS;
 extern EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *EFI_con_out;
 
-// Locate a protocol by finding a singular handle supporting it
-inline void *locate_protocol(const EFI_GUID &guid)
-{
-    void *interfacePtr = nullptr;
-
-    if (EBS->Hdr.Revision >= 0x110) {
-        EBS->LocateProtocol(&guid, nullptr, &interfacePtr);
-        return interfacePtr;
-    }
-
-    EFI_HANDLE locatedHandle;
-    UINTN handleBufsize = sizeof(locatedHandle);
-
-    EFI_STATUS status = EBS->LocateHandle(ByProtocol,
-            &guid, nullptr, &handleBufsize, &locatedHandle);
-    if (status != EFI_SUCCESS) {
-        return nullptr;
-    }
-
-    // This should succeed.
-    EBS->HandleProtocol(locatedHandle, &guid, &interfacePtr);
-
-    return interfacePtr;
-}
-
 // Allocate from the "pool". This is, essentially, malloc.
 inline void *alloc_pool(unsigned size)
 {
@@ -50,6 +25,49 @@ inline void *alloc_pool(unsigned size)
 inline void free_pool(void *buf)
 {
     EBS->FreePool(buf);
+}
+
+// Locate a protocol by finding a singular handle supporting it
+inline void *locate_protocol(const EFI_GUID &guid)
+{
+    void *interface_ptr = nullptr;
+
+    // LocateProtocol only available since UEFI 1.10:
+    if (EBS->Hdr.Revision >= (0x100 + 10)) {
+        EBS->LocateProtocol(&guid, nullptr, &interface_ptr);
+        return interface_ptr;
+    }
+
+    // Without LocateProtocol, we will try LocateHandle + HandleProtocol.
+    EFI_HANDLE located_handle;
+    UINTN handle_buf_size = sizeof(located_handle);
+
+    EFI_STATUS status = EBS->LocateHandle(ByProtocol, &guid, nullptr, &handle_buf_size, &located_handle);
+    if (EFI_ERROR(status)) {
+        if (status != EFI_BUFFER_TOO_SMALL) {
+            return nullptr;
+        }
+
+        // Our "buffer" was too small, i.e. there is more than one matching handle. Allocate a real buffer
+        // on the heap to obtain the full list of handles (even though we only need the first...).
+        EFI_HANDLE *heap_buf = (EFI_HANDLE *) alloc_pool(handle_buf_size);
+        if (heap_buf == nullptr) {
+            return nullptr;
+        }
+        status = EBS->LocateHandle(ByProtocol, &guid, nullptr, &handle_buf_size, heap_buf);
+
+        // Take the first handle, then free the buffer:
+        located_handle = *heap_buf;
+        free_pool(heap_buf);
+        if (EFI_ERROR(status)) {
+            return nullptr;
+        }
+    }
+
+    // This should succeed.
+    EBS->HandleProtocol(located_handle, &guid, &interface_ptr);
+
+    return interface_ptr;
 }
 
 // deleter for unique_ptr and pool allocations
