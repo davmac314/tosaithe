@@ -5,7 +5,7 @@
 
 entry: {
     description = 'Linux - with root on /dev/nvme0n1p2'
-    type = linux_chain
+    type = chain
     exec = '\vmlinuz-5.15.37'
     cmdline = 'linux root=/dev/nvme0n1p2'
 }
@@ -21,11 +21,4 @@ entry: {
     description = 'My kernel v0.1'
     type = tosaithe
     exec = '\kernel.elf'
-}
-
-entry: {
-    description = 'Limine'
-    type = chain
-    exec = '\limine.efi'
-    cmdline = 'limine.efi'
 }
