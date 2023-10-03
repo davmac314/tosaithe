@@ -1225,6 +1225,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     if (loader_data.acpi_rdsp == nullptr) {
         loader_data.acpi_rdsp = find_config_table(EFI_acpi_table_guid);
     }
+    loader_data.smbios3_entry = find_config_table(EFI_smbios3_table_guid);
 
     // Framebuffer setup
 

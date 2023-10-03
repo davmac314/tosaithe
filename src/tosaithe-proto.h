@@ -6,8 +6,6 @@
 #include <cstdint>
 
 static_assert(sizeof(void *) == 8, "this code needs adjusting for 32-bit environment");
-template <typename T> using ptr64 = T *;
-template <typename T> using funcptr64 = T;
 
 struct tosaithe_loader_data;
 struct tsbp_mmap_entry;
@@ -40,19 +38,20 @@ struct tosaithe_loader_data {
     char *   cmdline; // nul-terminated, UTF-8 (or subset) encoded
 
     tsbp_mmap_entry *memmap;
-    uint32_t memmap_entries;
+    uint32_t memmap_entries;  // (count of entries in memory map)
 
     tsbp_kernel_mapping *kern_map;
     uint32_t kern_map_entries;
 
-    void *   acpi_rdsp;  // ACPI RDSP (Root Data Structure Pointer), if known by boot loader
+    void *   acpi_rdsp;  // ACPI RDSP (Root Data Structure Pointer), if available
+    void *   smbios3_entry; // SMBIOS 3.0+ (64-bit) "entry point" (table), if available
 
     // EFI info. Following are 0/nullptr if not available:
 
-    void *   efi_memmap; // EFI-firmware provided memory map
+    void *   efi_memmap;             // EFI-firmware provided memory map
     uint32_t efi_memmap_descr_size;  // size of each entry in EFI memory map (in bytes)
     uint32_t efi_memmap_size;        // size of the complete EFI memory map (in bytes)
-    void *   efi_system_table; // EFI system table
+    void *   efi_system_table;       // EFI system table
 
     // Framebuffer info (addr/size are 0 if not available)
 
