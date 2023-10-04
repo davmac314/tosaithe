@@ -102,6 +102,13 @@ const Elf64_Word PT_TLS = 7; // thread-local storage template
 
 const Elf64_Word PT_GNU_EH_FRAME = 0x6474e550; // exception handling
 
+// segment flags (p_flags)
+const Elf64_Word PF_X = 1; // executable
+const Elf64_Word PF_W = 2; // writable
+const Elf64_Word PF_R = 4; // readable
+const Elf64_Word PF_MASKOS = 0x0ff00000; // mask for OS-specific flags
+const Elf64_Word PF_MASKPROC = 0xf0000000; // mask for processor-specific flags
+
 // Section header
 struct Elf64_Shdr
 {

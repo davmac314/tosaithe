@@ -28,18 +28,16 @@ static const uintptr_t PAGE1GB = 0x40000000u;
 // Top of memory minus 2GB. The kernel virtual address must be within this region.
 static const uintptr_t TOP_MINUS_2GB = 0xFFFFFFFF80000000u;
 
+namespace {
+
+// round up to a power of 2
 template <typename T>
-T round_down_to(T val, T alignment)
+T round_up_to_p2(T val, T alignment)
 {
-    return val - val % alignment;
+    return (val + alignment - 1) & ~(alignment - 1);
 }
 
-template <typename T>
-T round_up_to(T val, T alignment)
-{
-    return round_down_to(val + alignment - 1, alignment);
 }
-
 
 // Class to manage building a tosaithe boot protocol memory map structure
 class tosaithe_memmap {
@@ -673,17 +671,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                 return EFI_LOAD_ERROR;
             }
 
-            if (phdr.p_vaddr < phdr.p_offset) {
-                con_write(L"Error: unsupported ELF structure\r\n");
-                return EFI_LOAD_ERROR;
-            }
-
-            // Valid page sizes: 4kb, 2mb, 1gb
-            if (phdr.p_align != 0x1000u && phdr.p_align != 0x200000 && phdr.p_align != 0x40000000u) {
-                con_write(L"Error: unsupported ELF structure\r\n");
-                return EFI_LOAD_ERROR;
-            }
-
             if (phdr.p_vaddr & (phdr.p_align - 1)) {
                 con_write(L"Error: unsupported ELF structure\r\n");
                 return EFI_LOAD_ERROR;
@@ -693,9 +680,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             auto vaddr_high = vaddr + phdr.p_memsz;
 
             if (!found_loadable) {
+                // Valid page sizes: 4kb, 2mb, 1gb
+                if (phdr.p_align != 0x1000u && phdr.p_align != 0x200000 && phdr.p_align != 0x40000000u) {
+                    con_write(L"Error: unsupported ELF structure\r\n");
+                    return EFI_LOAD_ERROR;
+                }
+                seg_alignment = phdr.p_align;
                 lowest_vaddr = vaddr;
                 highest_vaddr = vaddr_high;
-                seg_alignment = phdr.p_align;
                 found_loadable = true;
             }
             else {
@@ -714,13 +706,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         }
     }
 
-    if (!found_loadable) {
-        con_write(L"Error: no loadable segments in ELF\r\n");
-        return EFI_LOAD_ERROR;
-    }
-
-    if (lowest_vaddr < TOP_MINUS_2GB) {
+    if (!found_loadable || lowest_vaddr < TOP_MINUS_2GB) {
         con_write(L"Error: unsupported ELF structure\r\n");
+        return EFI_LOAD_ERROR;
     }
 
 
@@ -729,29 +717,31 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     efi_page_alloc kernel_alloc;
 
     {
-        UINTN req_size = round_up_to(highest_vaddr - lowest_vaddr, PAGE4KB);
+        UINTN req_size = round_up_to_p2(highest_vaddr - lowest_vaddr, PAGE4KB);
         UINTN pages_to_alloc = (req_size + seg_alignment - 1) / PAGE4KB;
 
         kernel_alloc.allocate(pages_to_alloc);
 
-        if ((kernel_alloc.get_ptr() & (seg_alignment - 1)) != 0) {
-            // trim start
-            uintptr_t aligned_alloc = kernel_alloc.get_ptr()
-                    + (seg_alignment - (kernel_alloc.get_ptr() % seg_alignment));
-            if (aligned_alloc != kernel_alloc.get_ptr()) {
-                EBS->FreePages(kernel_alloc.get_ptr(),
-                        (aligned_alloc - kernel_alloc.get_ptr()) / PAGE4KB);
+        uintptr_t aligned_begin = kernel_alloc.get_ptr(); // may not be aligned yet...
+        uintptr_t alloc_offset = aligned_begin & (seg_alignment - 1);
+        if (alloc_offset != 0) {
+            // correct alignment:
+            aligned_begin = (aligned_begin & ~(seg_alignment - 1));
+            if (aligned_begin < kernel_alloc.get_ptr()) {
+                aligned_begin += seg_alignment;
             }
-
-            // trim end
-            uintptr_t end_trim = kernel_alloc.get_ptr() + pages_to_alloc * PAGE4KB
-                    - (aligned_alloc + req_size);
-            if (end_trim != 0) {
-                EBS->FreePages(aligned_alloc + req_size, end_trim / PAGE4KB);
-            }
-
-            kernel_alloc.rezone(aligned_alloc, req_size / PAGE4KB);
+            // trim allocation (start):
+            EBS->FreePages(kernel_alloc.get_ptr(), (aligned_begin - kernel_alloc.get_ptr()) / PAGE4KB);
         }
+
+        // trim end
+        uintptr_t end_trim = kernel_alloc.get_ptr() + pages_to_alloc * PAGE4KB
+                - (aligned_begin + req_size);
+        if (end_trim != 0) {
+            EBS->FreePages(aligned_begin + req_size, end_trim / PAGE4KB);
+        }
+
+        kernel_alloc.rezone(aligned_begin, req_size / PAGE4KB);
     }
 
 
@@ -834,6 +824,22 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     }
 
     kernel_handle.release();
+
+    // build vector of kernel mappings
+    std::vector<tsbp_kernel_mapping> tsbp_kernel_map;
+    for (uint16_t i = 0; i < elf_ph_ent_num; ++i) {
+        uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + elf_header_alloc.get_ptr();
+        Elf64_Phdr phdr;
+        std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
+        if (phdr.p_type == PT_LOAD) {
+            tsbp_kernel_map.emplace_back(tsbp_kernel_mapping {
+                phdr.p_vaddr - lowest_vaddr + kernel_alloc.get_ptr(),  // base physical address
+                phdr.p_vaddr,
+                round_up_to_p2(phdr.p_memsz, seg_alignment),  // length
+                phdr.p_flags & 0x7 // X/W/R flags
+            });
+        }
+    }
 
     // Check signature
     if (std::memcmp(&ts_entry_header->signature, "TSBP", 4) != 0) {
@@ -1279,13 +1285,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     }
 
     // And finally map the kernel:
+    // TODO map each segment separately, with different permissions
     do_mapping(lowest_vaddr, kernel_alloc.get_ptr(), kernel_alloc.get_ptr()
             + kernel_alloc.page_count() * PAGE4KB, memory_types::CACHE_WB);
-
-    std::unique_ptr<tsbp_kernel_mapping> tsbp_kernel_map = std::make_unique<tsbp_kernel_mapping>();
-    tsbp_kernel_map->base_phys = kernel_alloc.get_ptr();
-    tsbp_kernel_map->base_virt = lowest_vaddr;
-    tsbp_kernel_map->length = kernel_alloc.page_count() * PAGE4KB;
 
     // Build tosaithe protocol memory map from EFI memory map
 
@@ -1422,8 +1424,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     loader_data.memmap = tsbp_memmap.get();
     loader_data.memmap_entries = tsbp_memmap.get_size();
-    loader_data.kern_map = tsbp_kernel_map.get();
-    loader_data.kern_map_entries = 1;
+    loader_data.kern_map = tsbp_kernel_map.data();
+    loader_data.kern_map_entries = tsbp_kernel_map.size();
 
     loader_data.efi_memmap = efi_memmap_ptr.get();
     loader_data.efi_memmap_descr_size = memMapDescrSize;

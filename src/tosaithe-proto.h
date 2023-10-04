@@ -108,6 +108,13 @@ struct tsbp_kernel_mapping {
     uintptr_t base_phys;
     uintptr_t base_virt;
     uintptr_t length;
+    unsigned flags;
+};
+
+struct tsbp_kernel_mapping_flags {
+    static const unsigned EXEC = 0x1;
+    static const unsigned WRITE = 0x2;
+    static const unsigned READ = 0x4;
 };
 
 // Entry point details:
