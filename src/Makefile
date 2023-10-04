@@ -58,6 +58,7 @@ disk.img: tosaithe.efi
 image-dir: tosaithe.efi
 	mkdir -p image
 	cp tosaithe.efi image
+	cp ../doc/tosaithe.conf.example image/tosaithe.conf
 
 # Create a disk image with the tosaithe.efi executable on it (Linux).
 # requires mtools and dosfstools. This is an example as alternative to the above
