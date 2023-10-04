@@ -762,7 +762,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     tosaithe_entry_header *ts_entry_header = nullptr;
 
-    for (uint16_t i = 0; i < elf_ph_ent_num; i++) {
+    for (uint16_t i = 0; i < elf_ph_ent_num; /* increment in body */) {
         uintptr_t ph_addr = i * elf_ph_ent_size + elf_ph_off + elf_header_alloc.get_ptr();
         Elf64_Phdr phdr;
         std::memcpy(&phdr, (void *)ph_addr, sizeof(phdr));
@@ -772,31 +772,46 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             UINTN seek_pos;
             UINTN amount_to_read;
             void *read_to_addr;
+            UINTN seg_size = phdr.p_filesz;
+
+            // Look for additional adjacent segments to combine as a single read
+            while (++i < elf_ph_ent_num) {
+                ph_addr += elf_ph_ent_size;
+                Elf64_Phdr next_phdr;
+                std::memcpy(&next_phdr, (void *)ph_addr, sizeof(next_phdr));
+                if (next_phdr.p_type != PT_LOAD)
+                    break;
+                // If same physical-virtual offset, combine segments
+                if ((next_phdr.p_paddr - next_phdr.p_vaddr) != (phdr.p_paddr - phdr.p_vaddr))
+                    break;
+
+                seg_size = (next_phdr.p_paddr - phdr.p_paddr) + next_phdr.p_filesz;
+            }
 
             // We already have read a decent chunk when we read the ELF header (an amount given by
             // first_chunk). If that covers the segments portion of the file, or part of it, copy
             // from the header rather than re-reading the file:
             if (phdr.p_offset < first_chunk) {
                 // copy from our initial read rather than re-reading
-                auto copy_size = std::min(first_chunk - phdr.p_offset, phdr.p_filesz);
+                auto copy_size = std::min(first_chunk - phdr.p_offset, seg_size);
                 memcpy((void *)(kernel_alloc.get_ptr() + addr_offs), ((char *)elf_hdr) + phdr.p_offset, copy_size);
-                if (copy_size == phdr.p_filesz) {
+                if (copy_size == seg_size) {
                     do_file_read = false;
                 }
                 else {
                     seek_pos = phdr.p_offset + copy_size;
-                    amount_to_read = phdr.p_filesz - copy_size;
+                    amount_to_read = seg_size - copy_size;
                     read_to_addr = (void *)(kernel_alloc.get_ptr() + addr_offs + copy_size);
                 }
             }
             else {
                 seek_pos = phdr.p_offset;
-                amount_to_read = phdr.p_filesz;
+                amount_to_read = seg_size;
                 read_to_addr = (void *)(kernel_alloc.get_ptr() + addr_offs);
             }
 
             // Read any portion of the segment that we didn't copy from the header chunk:
-            if (do_file_read) {
+            if (do_file_read && seg_size != 0) {
                 status = kernel_handle.seek(seek_pos);
                 if (!EFI_ERROR(status)) {
                     read_amount = amount_to_read;
@@ -812,6 +827,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             if (ts_entry_header == nullptr) {
                 ts_entry_header = (tosaithe_entry_header *)(kernel_alloc.get_ptr() + addr_offs);
             }
+        }
+        else {
+            ++i;
         }
     }
 
