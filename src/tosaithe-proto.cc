@@ -1315,11 +1315,12 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     retrieve_efi_memmap_2:
 
     auto efi_attrib_to_tosaithe = [](uint64_t attr) {
-        if (attr & EFI_MEMORY_WB) return tsbp_mmap_flags::CACHE_WB;
-        if (attr & EFI_MEMORY_WT) return tsbp_mmap_flags::CACHE_WT;
-        if (attr & EFI_MEMORY_WC) return tsbp_mmap_flags::CACHE_WC;
-        if (attr & EFI_MEMORY_WP) return tsbp_mmap_flags::CACHE_WP;
-        return tsbp_mmap_flags::CACHE_UC;
+        uint32_t rs = (attr & EFI_MEMORY_RUNTIME) ? tsbp_mmap_flags::UEFI_RUNTIME : 0;
+        if (attr & EFI_MEMORY_WB) return tsbp_mmap_flags::CACHE_WB | rs;
+        if (attr & EFI_MEMORY_WT) return tsbp_mmap_flags::CACHE_WT | rs;
+        if (attr & EFI_MEMORY_WC) return tsbp_mmap_flags::CACHE_WC | rs;
+        if (attr & EFI_MEMORY_WP) return tsbp_mmap_flags::CACHE_WP | rs;
+        return tsbp_mmap_flags::CACHE_UC | rs;
     };
 
     // Copy entries from EFI memory map to our boot protocol map
@@ -1334,19 +1335,21 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             st_type = tsbp_mmap_type::RESERVED;
             break;
         case EfiLoaderData:
-        case EfiBootServicesCode:
-        case EfiBootServicesData:
             // TODO: we don't really need all EfiLoaderData to be marked reclaimable; the majority
             // is probably USABLE. Only memory that is specifically made available to the kernel
             // needs to be marked RECLAIMABLE.
             st_type = tsbp_mmap_type::BOOTLOADER_RECLAIMABLE;
             break;
         case EfiRuntimeServicesCode:
+            st_type = tsbp_mmap_type::UEFI_RUNTIME_CODE;
+            break;
         case EfiRuntimeServicesData:
-            st_type = tsbp_mmap_type::RESERVED;
+            st_type = tsbp_mmap_type::UEFI_RUNTIME_DATA;
             break;
         case EfiLoaderCode:
         case EfiConventionalMemory:
+        case EfiBootServicesCode:
+        case EfiBootServicesData:
             st_type = tsbp_mmap_type::USABLE;
             break;
         case EfiUnusableMemory:
@@ -1373,12 +1376,11 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         uint64_t number_of_pages = efi_mem_iter->NumberOfPages;
         EFI_PHYSICAL_ADDRESS physical_start = efi_mem_iter->PhysicalStart;
 
-        // Merge BOOTLOADER_RECLAIMABLE sections (there will be separate for code and data, but
-        // this distinction is totally unimportant):
+        // Merge BOOTLOADER_RECLAIMABLE sections
         if (st_type == tsbp_mmap_type::BOOTLOADER_RECLAIMABLE) {
             auto efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
             while (efi_mem_next < efi_mem_end) {
-                if (efi_mem_next->Type != EfiBootServicesCode && efi_mem_next->Type != EfiBootServicesData)
+                if (efi_mem_next->Type != EfiLoaderData)
                     break;
                 if (efi_mem_next->Attribute != efi_mem_iter->Attribute)
                     break;
@@ -1391,9 +1393,22 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         else if (st_type == tsbp_mmap_type::RESERVED) {
             auto efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
             while (efi_mem_next < efi_mem_end) {
-                if (efi_mem_next->Type != EfiRuntimeServicesCode && efi_mem_next->Type != EfiRuntimeServicesData
-                        && efi_mem_next->Type != EfiMemoryMappedIO && efi_mem_next->Type != EfiMemoryMappedIOPortSpace
+                if (efi_mem_next->Type != EfiMemoryMappedIO && efi_mem_next->Type != EfiMemoryMappedIOPortSpace
                         && efi_mem_next->Type != EfiPalCode)
+                    break;
+                if (efi_mem_next->Attribute != efi_mem_iter->Attribute)
+                    break;
+                efi_mem_iter = efi_mem_next;
+                number_of_pages += efi_mem_iter->NumberOfPages;
+                efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
+            }
+        }
+        // And any USABLE sections
+        else if (st_type == tsbp_mmap_type::USABLE) {
+            auto efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
+            while (efi_mem_next < efi_mem_end) {
+                if (efi_mem_next->Type != EfiLoaderCode && efi_mem_next->Type != EfiConventionalMemory
+                        && efi_mem_next->Type != EfiBootServicesCode && efi_mem_next->Type != EfiBootServicesData)
                     break;
                 if (efi_mem_next->Attribute != efi_mem_iter->Attribute)
                     break;
@@ -1407,10 +1422,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                 efi_attrib_to_tosaithe(efi_mem_iter->Attribute));
         efi_mem_iter = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
     }
-
-    // We won't release the map here, even though we no longer need it, since that could affect
-    // the map and potentially our ability to successfully call ExitBootServices().
-    // -> Don't: efiMemMapPtr.reset();
 
     // Insert memory-map entries for kernel
     tsbp_memmap.insert_entry(tsbp_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get_ptr(),

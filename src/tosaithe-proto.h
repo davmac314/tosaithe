@@ -76,8 +76,10 @@ enum class tsbp_mmap_type : uint32_t {
     RESERVED               = 1,
     ACPI_RECLAIMABLE       = 2,  // stores ACPI tables/data
     ACPI_NVS               = 3,  // reserved for (ACPI) firmware use
-    BAD_MEMORY             = 4,
-    PERSISTENT_MEMORY      = 5,  // persistent; precise meaning/use is system-dependent
+    UEFI_RUNTIME_CODE      = 4,
+    UEFI_RUNTIME_DATA      = 5,
+    BAD_MEMORY             = 6,
+    PERSISTENT_MEMORY      = 7,  // persistent; precise meaning/use is system-dependent
     BOOTLOADER_RECLAIMABLE = 0x1000, // tosaithe loader data structure, memory map, command line, etc
     KERNEL_AND_MODULES     = 0x1001,
     FRAMEBUFFER            = 0x1002
@@ -94,6 +96,8 @@ struct tsbp_mmap_flags {
     // (which then may be overwridden via MTRRs)
     static const uint32_t CACHE_WP = 0x4; // write-protect (allow reads from cache, writes don't go to cache)
     static const uint32_t CACHE_WC = 0x5; // write-combining (writes go through store buffer, not cached)
+
+    static const uint32_t UEFI_RUNTIME = 0x10;  // If set, required to be mapped by UEFI runtime services
 };
 
 struct tsbp_mmap_entry {
