@@ -386,7 +386,7 @@ typedef struct _EFI_SIMPLE_TEXT_INPUT_PROTOCOL {
 
 #define EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID {0x9042a9de,0x23dc,0x4a38, {0x96,0xfb,0x7a,0xde,0xd0,0x80,0x51,0x6a}}
 
-const EFI_GUID EFI_graphics_output_protocol_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+static const EFI_GUID EFI_graphics_output_protocol_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
 
 typedef enum {
     PixelRedGreenBlueReserved8BitPerColor,

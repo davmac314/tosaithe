@@ -1,3 +1,6 @@
+#ifndef UEFI_DEVICEPATH_H_INCLUDED
+#define UEFI_DEVICEPATH_H_INCLUDED 1
+
 #include "uefi.h"
 
 #define EFI_DEVICE_PATH_PROTOCOL_GUID {0x09576e91,0x6d3f,0x11d2, {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}}
@@ -5,16 +8,16 @@
 #define EFI_DEVICE_PATH_FROM_TEXT_PROTOCOL_GUID {0x5c99a21,0xc70f,0x4ad2, {0x8a,0x5f,0x35,0xdf,0x33,0x43,0xf5,0x1e}}
 #define EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID {0x379be4e,0xd706,0x437d, {0xb0,0x37,0xed,0xb8,0x2f,0xb7,0x72,0xa4 }}
 
-const EFI_GUID EFI_device_path_protocol_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
-const EFI_GUID EFI_device_path_to_text_protocol_guid = EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID;
-const EFI_GUID EFI_device_path_from_text_protocol_guid = EFI_DEVICE_PATH_FROM_TEXT_PROTOCOL_GUID;
-const EFI_GUID EFI_device_path_utilities_protocol_guid = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
+static const EFI_GUID EFI_device_path_protocol_guid = EFI_DEVICE_PATH_PROTOCOL_GUID;
+static const EFI_GUID EFI_device_path_to_text_protocol_guid = EFI_DEVICE_PATH_TO_TEXT_PROTOCOL_GUID;
+static const EFI_GUID EFI_device_path_from_text_protocol_guid = EFI_DEVICE_PATH_FROM_TEXT_PROTOCOL_GUID;
+static const EFI_GUID EFI_device_path_utilities_protocol_guid = EFI_DEVICE_PATH_UTILITIES_PROTOCOL_GUID;
 
 typedef struct _EFI_DEVICE_PATH_PROTOCOL {
     uint8_t Type;
     uint8_t SubType;
     uint8_t Length[2];
-} __attribute__((packed, aligned(1))) EFI_DEVICE_PATH_PROTOCOL;
+} EFI_DEVICE_PATH_PROTOCOL;
 
 typedef CHAR16 *(EFIAPI *EFI_DEVICE_PATH_TO_TEXT_NODE)
         (IN CONST EFI_DEVICE_PATH_PROTOCOL* DeviceNode, IN BOOLEAN DisplayOnly,
@@ -64,3 +67,5 @@ typedef struct _EFI_DEVICE_PATH_UTILITIES_PROTOCOL {
     EFI_DEVICE_PATH_UTILS_IS_MULTI_INSTANCE     IsDevicePathMultiInstance;
     EFI_DEVICE_PATH_UTILS_CREATE_NODE           CreateDeviceNode;
 } EFI_DEVICE_PATH_UTILITIES_PROTOCOL;
+
+#endif

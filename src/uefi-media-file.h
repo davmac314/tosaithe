@@ -6,13 +6,13 @@
 #define EFI_LOAD_FILE_PROTOCOL_GUID {0x56EC3091,0x954C,0x11d2, {0x8e,0x3f,0x00,0xa0, 0xc9,0x69,0x72,0x3b}}
 #define EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID {0x0964e5b22,0x6459,0x11d2, {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}}
 
-const EFI_GUID EFI_load_file_protocol_guid = EFI_LOAD_FILE_PROTOCOL_GUID;
-const EFI_GUID EFI_simple_file_system_protocol_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+static const EFI_GUID EFI_load_file_protocol_guid = EFI_LOAD_FILE_PROTOCOL_GUID;
+static const EFI_GUID EFI_simple_file_system_protocol_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
 
 // GUIDs that can be passed to EFI_FILE_PROTOCOL.GetInfo():
 #define EFI_FILE_INFO_ID {0x09576e92,0x6d3f,0x11d2, {0x8e,0x39,0x00,0xa0,0xc9,0x69,0x72,0x3b}}
 
-const EFI_GUID EFI_file_info_id = EFI_FILE_INFO_ID;
+static const EFI_GUID EFI_file_info_id = EFI_FILE_INFO_ID;
 
 #define EFI_FILE_MODE_READ     0x0000000000000001
 #define EFI_FILE_MODE_WRITE    0x0000000000000002
