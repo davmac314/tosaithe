@@ -7,10 +7,10 @@
 
 #include <cstddef>
 
-#include "uefi.h"
-#include "uefi-loadedimage.h"
-#include "uefi-devicepath.h"
-#include "uefi-media-file.h"
+#include <uefi.h>
+#include <uefi-loadedimage.h>
+#include <uefi-devicepath.h>
+#include <uefi-media-file.h>
 
 #include "tosaithe-util.h"
 

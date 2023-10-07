@@ -10,9 +10,9 @@
 
 #include <elf.h>
 
-#include "uefi.h"
-#include "uefi-media-file.h"
-#include "uefi-loadedimage.h"
+#include <uefi.h>
+#include <uefi-media-file.h>
+#include <uefi-loadedimage.h>
 
 #include "cpu-x86_64.h"
 #include "tosaithe-util.h"

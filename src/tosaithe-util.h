@@ -1,10 +1,12 @@
 #ifndef INCLUDED_TOSAITHE_UTIL_H
 #define INCLUDED_TOSAITHE_UTIL_H
 
-#include "uefi.h"
-#include "uefi-media-file.h"
+#include <uefi.h>
+#include <uefi-media-file.h>
 
 #include <memory>
+#include <string>
+
 #include <cstddef>
 
 extern EFI_BOOT_SERVICES *EBS;

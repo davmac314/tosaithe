@@ -1,5 +1,7 @@
 #include "tosaithe-util.h"
-#include "uefi-devicepath.h"
+
+#include <uefi-devicepath.h>
+#include <uefi-media-file.h>
 
 EFI_FILE_PROTOCOL *open_file(const EFI_DEVICE_PATH_PROTOCOL *dev_path)
 {
