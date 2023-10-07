@@ -190,7 +190,7 @@ static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, c
 }
 
 EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path,
-        const CHAR16 *cmdLine);
+        const char *cmdLine);
 
 struct menu_entry {
     enum entry_type_t {
@@ -201,12 +201,12 @@ struct menu_entry {
     std::wstring description;
     entry_type_t entry_type = CHAIN;
     std::wstring exec_path;
-    std::wstring cmdline;
+    std::string cmdline;
 
     menu_entry() { }
 
     menu_entry(const CHAR16 *description_p, entry_type_t entry_type_p, const CHAR16 *exec_path_p,
-            const CHAR16 *cmdline_p)
+            const char *cmdline_p)
         : description(description_p), entry_type(entry_type_p), exec_path(exec_path_p), cmdline(cmdline_p) { }
 };
 
@@ -265,38 +265,8 @@ static const char * const msg_unrecognized_value = "unrecognized setting value";
 static const char * const msg_unrecognized_entry_type = "unrecognized entry type";
 static const char * const msg_unrecognized_setting = "unrecognized setting";
 
-class utf8to16
-{
-    std::wstring output;
 
-public:
-    void process(char c)
-    {
-        int i = c;
-        if ((i & 0x80u) == 0) {
-            // plain ascii
-            output += (wchar_t)i;
-        } else {
-            // TODO
-        }
-    }
-
-    void process(const char *s)
-    {
-        while (*s != 0) {
-            process(*s);
-            s++;
-        }
-    }
-
-    std::wstring &get_output()
-    {
-        return output;
-    }
-};
-
-
-std::wstring read_assignment_value(std::string_view &conf)
+std::string read_assignment_value(std::string_view &conf)
 {
     skip_ws(conf);
     if (conf.empty() || conf[0] != '=') throw parse_exception {msg_equals_after_var};
@@ -309,18 +279,13 @@ std::wstring read_assignment_value(std::string_view &conf)
         // TODO check for trailing junk (allow trailing comment)
         skip_to_next_line(conf);
 
-        utf8to16 uu;
-        for (char c : value) {
-            uu.process(c);
-        }
-
-        return uu.get_output();
+        return std::string(value.data(), value.length());
     }
     else if (conf[0] == '\'') {
         conf.remove_prefix(1);
-        utf8to16 uu;
+        std::string result;
         while (!conf.empty() && conf[0] != '\'') {
-            uu.process(conf[0]);
+            result += conf[0];
             conf.remove_prefix(1);
         }
 
@@ -331,7 +296,7 @@ std::wstring read_assignment_value(std::string_view &conf)
         // TODO check for trailing junk (allow trailing comment)
         skip_to_next_line(conf);
 
-        return uu.get_output();
+        return result;
     }
 
     throw parse_exception {msg_unrecognized_value};
@@ -348,18 +313,18 @@ menu_entry parse_entry(std::string_view &conf)
         }
         else if (is_ident_lead(conf[0])) {
             std::string_view ident = read_ident(conf);
-            std::wstring value = read_assignment_value(conf);
+            std::string value = read_assignment_value(conf);
             if (ident == "description") {
-                entry.description = std::move(value);
+                entry.description = utf8toUCS2::convert(value.c_str());
             }
             else if (ident == "exec") {
-                entry.exec_path = std::move(value);
+                entry.exec_path = utf8toUCS2::convert(value.c_str());
             }
             else if (ident == "type") {
-                if (value == L"chain") {
+                if (value == "chain") {
                     entry.entry_type = menu_entry::CHAIN;
                 }
-                else if (value == L"tosaithe") {
+                else if (value == "tosaithe") {
                     entry.entry_type = menu_entry::TOSAITHE;
                 }
                 else {
@@ -507,7 +472,7 @@ EfiMain (
         menu = parse_config(conf_buf.get(), conf_size);
     }
     catch (parse_exception &pe) {
-        utf8to16 uu;
+        utf8toUCS2 uu;
         uu.process(pe.what());
 
         con_write(L"Error in tosaithe.conf: ");
@@ -629,7 +594,8 @@ EfiMain (
 
         try {
             if (entry.entry_type == menu_entry::CHAIN) {
-                EFI_STATUS status = chain_load(ImageHandle, entry.exec_path.c_str(), entry.cmdline.c_str());
+                std::wstring cmdline16 = utf8toUCS2::convert(entry.cmdline.c_str());
+                EFI_STATUS status = chain_load(ImageHandle, entry.exec_path.c_str(), cmdline16.c_str());
                 if (status == EFI_LOAD_ERROR) {
                     // error message has already been displayed
                     con_write(L"\r\n");

@@ -442,4 +442,69 @@ inline EFI_FILE_INFO *get_file_info(EFI_FILE_PROTOCOL *file)
     return buffer;
 }
 
+// Convert UTF-8 input to UCS-2 (16-bit unicode codepoint)
+class utf8toUCS2
+{
+    std::wstring output;
+    unsigned codepoint;
+    unsigned remaining_bytes = 0;
+
+public:
+    void process(char c)
+    {
+        unsigned i = c & 0xFFu;
+        if (remaining_bytes != 0) {
+            if ((i & 0xE0u) != 0xC0) {
+                // encoding error
+                output += L'?';
+                remaining_bytes = 0;
+                return;
+            }
+            codepoint <<= 6;
+            codepoint |= (i & 0x3F);
+            remaining_bytes--;
+            if (remaining_bytes == 0) {
+                // convert codepoint to UCS16
+                if (codepoint >= 0x10000) {
+                    // non-representable codepoint
+                    output += L'?';
+                }
+                else {
+                    output += (wchar_t)codepoint;
+                }
+            }
+            return;
+        }
+
+        if ((i & 0x80u) == 0) {
+            // plain ascii
+            output += (wchar_t)i;
+        } else if ((i * 0xE0u) == 0xC0) {
+            // 2 byte encoding
+            codepoint = i & 0x1F;
+            remaining_bytes = 1;
+        }
+    }
+
+    void process(const char *s)
+    {
+        while (*s != 0) {
+            process(*s);
+            s++;
+        }
+    }
+
+    std::wstring &get_output()
+    {
+        return output;
+    }
+
+    static std::wstring convert(const char *input)
+    {
+        utf8toUCS2 converter;
+        converter.process(input);
+        return converter.get_output();
+    }
+};
+
 #endif /* INCLUDED_TOSAITHE_UTIL_H */

@@ -478,7 +478,7 @@ EFI_MEMORY_DESCRIPTOR *efi_memmap_find(UINTN addr, EFI_MEMORY_DESCRIPTOR *memmap
 }
 
 // Load a kernel via the TSBP (ToSaithe Boot Protocol)
-EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path, const CHAR16 *cmdLine)
+EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path, const char *cmdLine)
 {
     efi_file_handle kernel_handle;
     UINTN kernel_file_size = 0;
@@ -1271,7 +1271,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     loader_data.version = 0;
     loader_data.flags = 0;
-    loader_data.cmdline = nullptr; // TODO
+    loader_data.cmdline = cmdLine;
     // .memmap/.memmap_entries set below after construction of the map
 
     loader_data.acpi_rdsp = find_config_table(EFI_acpi20_table_guid);
@@ -1477,7 +1477,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     loader_data.efi_memmap_size = memMapSize;
     loader_data.efi_system_table = EST;
 
-    // TODO command line
     // TODO modules
 
     // Enable paging (4-level)

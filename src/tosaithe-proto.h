@@ -35,7 +35,7 @@ struct tosaithe_loader_data {
     uint32_t version; // = 0
     uint32_t flags;  // (currently unused)
 
-    char *   cmdline; // nul-terminated, UTF-8 (or subset) encoded
+    const char *cmdline; // nul-terminated, UTF-8 (or subset) encoded
 
     tsbp_mmap_entry *memmap;
     uint32_t memmap_entries;  // (count of entries in memory map)
