@@ -7,10 +7,10 @@ info, but also, the firmware will load the PE image at an arbitrary address.
 Here's how I do it with Tosaithe, assuming it starts and gets as far as showing the initial banner:
 
 1. Uncomment the lines in EfiMain which find and print the "Loaded image base". Re-build.
-3. Run Tosaithe in Qemu, with "-s" passed to Qemu (so that you can connect via GDB).
+2. Run Tosaithe in Qemu, with "-s" passed to Qemu (so that you can connect via GDB).
    Watch for the "Loaded image base = " line giving the run-time address of the image.
    Add the offset of the .text section in order to find the address of the .text section.
-4. Run GDB (without arguments) in the directory containing "tosaithe.efi.so". This is an ELF
+3. Run GDB (without arguments) in the directory containing "tosaithe.efi.so". This is an ELF
    version of the Tosaithe binary, which should be content-wise identical with the "tosaithe.efi"
    binary. The ELF version however includes debugging symbols.
 
