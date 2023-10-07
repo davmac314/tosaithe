@@ -977,8 +977,19 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         }
     }
 
-    // Create page mapping for a region
-    auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end, memory_types mem_type) {
+    // Create page mapping for a region, i.e. insert a mapping from some virtual address to a physical
+    // address. Mapping will use the largest possible page size (according to the alignment/size of the
+    // mapped range, and processor support for page size).
+    //
+    // In general this expects the virtual range to be unoccupied, i.e. does not support mapping over an
+    // existing mapping; however, it does support over-mapping if the new mapper is equally or more
+    // fine-grained than the existing mapping(s) (i.e. if the new page size will be equal or smaller, across
+    // all of the mapped range).
+    //
+    // page_attrs - can include Writable (0x2), NX/XD (not executable/execute disable) (1<<63).
+    //              NX/XD requires processor support.
+    auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end, memory_types mem_type,
+            uint64_t page_attrs) {
         uintptr_t virt_phys_diff = virt_addr - phys_addr_beg;
         bool use_1gb_pages = have_1gb_pages ? ((virt_phys_diff & (PAGE1GB - 1)) == 0) : false;
         bool use_2mb_pages = (virt_phys_diff & (PAGE2MB - 1)) == 0;
@@ -987,14 +998,19 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         // PCD = bit 4
         // PAT = bit 12 (1GB/2MB page) or bit 7 (4kb page)
 
-        // allocate an intermediate page table for a given entry
+        // allocate an intermediate page table for a given entry. If the entry is already marked
+        // present, no allocation is performed and the entry is returned unchanged (unless the
+        // entry points to a large page and split_large is true).
+        //
+        // pde_ent: entry which will be updated to point to the allocated page table
+        // split_large: if true, and the entry points to a large page
         auto allocate_int_pt = [&](PDE &pde_ent, bool split_large, uintptr_t pg_size) {
             if ((pde_ent.entry & 0x1) != 0) {
                 // intermediate already exists... or is it a large page?
                 if (split_large && (pde_ent.entry & 0x80) != 0) {
                     // split large page
 
-                    // Preserve caching attributes (memory type):
+                    // Preserve caching attributes (memory type), W bits
                     uint64_t PAT_PCD_PWT_PS_dst;
                     if (pg_size == PAGE4KB) {
                         // PAT is in different place between 4kb page entries and larger entries:
@@ -1004,6 +1020,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                     else {
                         PAT_PCD_PWT_PS_dst = (pde_ent.entry & 0x1018) | 0x80 /* page size */;
                     }
+                    uint64_t dst_entry_flags = PAT_PCD_PWT_PS_dst | (pde_ent.entry & /* W */ 0x2);
 
                     uintptr_t orig_phys = pde_ent.entry & 0x000FFFFFFFFFF000u;
                     auto page_for_split = (uintptr_t)take_page();
@@ -1011,7 +1028,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                     PDE *split_page = (PDE *)page_for_split;
                     // re-create original mapping, will be partially overwritten by caller
                     for (int i = 0; i < 512; i++) {
-                        split_page[i] = { orig_phys | 3 | PAT_PCD_PWT_PS_dst };
+                        split_page[i] = { orig_phys | dst_entry_flags | 0x1u /* present */ };
                         orig_phys += pg_size;
                     }
                 }
@@ -1020,7 +1037,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                 // nothing in the entry yet. Allocate:
                 auto pdpt_page = (uintptr_t)take_page();
                 pde_ent.entry = pdpt_page | 3 /* present/read+write */;
-                // (as this is an intermediate page, leave the cache attributes as default)
+                // (leave the cache attributes as default; they can be modified by caller)
             }
         };
 
@@ -1048,7 +1065,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             // set entrie(s) for 1GB page(s)
             int pdpt_ind = (virt_addr >> 30) & 0x1FF;
             do {
-                pdpt[pdpt_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | 3 /* present/read+write */ };
+                pdpt[pdpt_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | page_attrs | 1 /* present */ };
                 phys_addr_beg += PAGE1GB;
                 virt_addr += PAGE1GB;
                 if ((phys_addr_end - phys_addr_beg) < PAGE1GB) {
@@ -1089,7 +1106,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             // set entrie(s) for 2MB page(s)
             int pd_ind = (virt_addr >> 21) & 0x1FF;
             do {
-                pd[pd_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | 3 /* present/read+write */ };
+                pd[pd_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | page_attrs | 1 /* present */ };
                 phys_addr_beg += PAGE2MB;
                 virt_addr += PAGE2MB;
                 if ((phys_addr_end - phys_addr_beg) < PAGE2MB) {
@@ -1140,7 +1157,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             // set entrie(s) for 4kb page(s)
             int pt_ind = (virt_addr >> 12) & 0x1FF;
             do {
-                pt[pt_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | 3 /* present/read+write */ };
+                pt[pt_ind] = {phys_addr_beg | PAT_PCD_PWT_PS_dst | page_attrs | 1 /* present */ };
                 phys_addr_beg += PAGE4KB;
                 virt_addr += PAGE4KB;
                 if (phys_addr_end == phys_addr_beg) {
@@ -1173,12 +1190,21 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     EFI_MEMORY_DESCRIPTOR *mmdesc = efi_memmap_ptr.get();
     EFI_MEMORY_DESCRIPTOR *mmdesc_end = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapSize);
 
+    uint64_t page_attr_writable = 0x2; // writable
+
     auto mem_type_for_efi_attr = [&](uint64_t attr) {
         if (attr & EFI_MEMORY_WB) return memory_types::CACHE_WB;
         if (attr & EFI_MEMORY_WT) return memory_types::CACHE_WT;
         if (attr & EFI_MEMORY_WP) return memory_types::CACHE_WP;
         if (attr & EFI_MEMORY_WC) return memory_types::CACHE_WC;
         return memory_types::CACHE_UC;
+    };
+    auto page_attrs_for_efi_mem = [&](uint32_t efi_type) {
+        uint64_t attrs = 0;
+        if (efi_type != EfiRuntimeServicesCode && efi_type != EfiUnusableMemory) {
+            attrs |= page_attr_writable;
+        }
+        return attrs;
     };
 
     auto next_mmdesc_from = [&](EFI_MEMORY_DESCRIPTOR *mmdesc) {
@@ -1194,11 +1220,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             // to ensure the entire first 4GB is mapped regardless of whether there is physical
             // memory present):
             auto low0_end = std::min(mmdesc_phys_beg, 4*PAGE1GB);
-            do_mapping(0, low0_end, low0_end, memory_types::CACHE_UC);
+            do_mapping(0, low0_end, low0_end, memory_types::CACHE_UC, 0);
         }
 
         auto mem_type_this = mem_type_for_efi_attr(mmdesc->Attribute);
+        auto page_attrs_this = page_attrs_for_efi_mem(mmdesc->Type);
 
+        // Create a single mapping for as large a contiguous range as possible; break the range
+        // if the memory type or permissions (Writable bit) changes
         EFI_MEMORY_DESCRIPTOR *next_mmdesc = next_mmdesc_from(mmdesc);
         while (next_mmdesc != mmdesc_end) {
             if (next_mmdesc->PhysicalStart != mmdesc_phys_end) {
@@ -1206,9 +1235,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             }
 
             auto mem_type_next = mem_type_for_efi_attr(next_mmdesc->Attribute);
-            if (mem_type_this != mem_type_next) {
-                break;
-            }
+            if (mem_type_this != mem_type_next) break;
+            auto attrs_next = page_attrs_for_efi_mem(next_mmdesc->Type);
+            if (attrs_next != page_attrs_this) break;
 
             // extend end to this next descriptor's end:
             mmdesc_phys_end = next_mmdesc->PhysicalStart + next_mmdesc->NumberOfPages * 4096u;
@@ -1216,17 +1245,17 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             next_mmdesc = next_mmdesc_from(next_mmdesc);
         }
 
-        do_mapping(mmdesc_phys_beg, mmdesc_phys_beg, mmdesc_phys_end, mem_type_this);
+        do_mapping(mmdesc_phys_beg, mmdesc_phys_beg, mmdesc_phys_end, mem_type_this, page_attrs_this);
 
         // Within the 1st 4GB, map everything (even if not in the memory map). This will encompass
         // the LAPIC and IOAPIC for example.
         if (mmdesc_phys_end < 4*PAGE1GB) {
             if (next_mmdesc != mmdesc_end && next_mmdesc->PhysicalStart != mmdesc_phys_end) {
                 uintptr_t end_map_range = std::min(next_mmdesc->PhysicalStart, 4*PAGE1GB);
-                do_mapping(mmdesc_phys_end, mmdesc_phys_end, end_map_range, memory_types::CACHE_UC);
+                do_mapping(mmdesc_phys_end, mmdesc_phys_end, end_map_range, memory_types::CACHE_UC, 0);
             }
             else {
-                do_mapping(mmdesc_phys_end, mmdesc_phys_end, 4*PAGE1GB, memory_types::CACHE_UC);
+                do_mapping(mmdesc_phys_end, mmdesc_phys_end, 4*PAGE1GB, memory_types::CACHE_UC, 0);
             }
         }
 
@@ -1263,7 +1292,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         uintptr_t fb_addr = loader_data.framebuffer_addr;
         fb_region = fb_addr;
 
-        // See if there should be an existing mapping:
+        // See if there is an existing mapping for the framebuffer. There shouldn't be, but if there does
+        // happen to be an overlapping mapping we'll assume that the the memory map entry gives the
+        // total size.
         EFI_MEMORY_DESCRIPTOR *fb_desc = efi_memmap_find(fb_addr, efi_memmap_ptr.get(),
                 memMapSize, memMapDescrSize);
         if (fb_desc != nullptr) {
@@ -1271,7 +1302,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             fb_size = fb_desc->NumberOfPages * PAGE4KB;
         }
 
-        do_mapping(fb_region, fb_region, fb_region + fb_size, memory_types::CACHE_WC);
+        do_mapping(fb_region, fb_region, fb_region + fb_size, memory_types::CACHE_WC, page_attr_writable);
     }
 
     if (fb_size == 0 && (ts_entry_header->flags & tosaithe_hdr_flags::REQ_FRAMEBUFFER)) {
@@ -1285,9 +1316,12 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     }
 
     // And finally map the kernel:
-    // TODO map each segment separately, with different permissions
-    do_mapping(lowest_vaddr, kernel_alloc.get_ptr(), kernel_alloc.get_ptr()
-            + kernel_alloc.page_count() * PAGE4KB, memory_types::CACHE_WB);
+    for (const auto &mapping : tsbp_kernel_map) {
+        uint64_t attrs = mapping.flags & tsbp_kernel_mapping_flags::WRITE ? page_attr_writable : 0;
+        do_mapping(mapping.base_virt, mapping.base_phys, mapping.base_phys + mapping.length,
+                memory_types::CACHE_WB, attrs);
+    }
+
 
     // Build tosaithe protocol memory map from EFI memory map
 
@@ -1448,11 +1482,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     // Enable paging (4-level)
 
-    // IA32_EFER = 0xC0000080
-    // bit 0 enables SYSCALL/SYSRET [0x1]
-    // bit 8 = IA-32e mode enable  [0x100]
-    // bit 11 = enable NX bit (no-execute)  [0x800]
-
     // We can't change the paging mode once while paging is enabled, and we can't disable paging
     // while in long mode. We'd need to transition to 32-bit mode to disable paging, sigh.
     // We'll put that on the TODO list. For now, since we currently only handle 4-level paging,
@@ -1513,24 +1542,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             "movl $0x277, %%ecx\n"  // IA32_PAT
             "wrmsr\n"
 
-            // put our own page tables in place
+            // put our own page tables in place:
             "movq %0, %%rax\n"
             "movq %%rax, %%cr3\n"
-
-            //"movl $0xC0000080, %%ecx\n"
-            //"rdmsr\n"
-            //"orl $0x811, %%ecx\n"
-            //"wrmsr\n"
-
-            //"movq %%cr4, %%rax\n"
-            //"orl $0x20, %%eax\n"   // set bit 5, PAE
-            //"andl $0xFFFFEFFF, %%eax\n"  // clear bit 12, LA57
-            //"movq %%rax, %%cr4\n"
-
-            // Now (re-)enable paging
-            //"movq %%cr0, %%rax\n"
-            //"orl $0x80000000, %%eax\n"
-            //"movq %%rax, %%cr0\n"
 
             :
             : "rm"(page_tables)
