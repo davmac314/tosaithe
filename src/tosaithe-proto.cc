@@ -478,7 +478,8 @@ EFI_MEMORY_DESCRIPTOR *efi_memmap_find(UINTN addr, EFI_MEMORY_DESCRIPTOR *memmap
 }
 
 // Load a kernel via the TSBP (ToSaithe Boot Protocol)
-EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path, const char *cmdLine)
+EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path, const char *cmdLine,
+        void *ramdisk, uint64_t ramdisk_size)
 {
     efi_file_handle kernel_handle;
     UINTN kernel_file_size = 0;
@@ -1272,6 +1273,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     loader_data.version = 0;
     loader_data.flags = 0;
     loader_data.cmdline = cmdLine;
+    loader_data.ramdisk = ramdisk;
+    loader_data.ramdisk_size = ramdisk_size;
     // .memmap/.memmap_entries set below after construction of the map
 
     loader_data.acpi_rdsp = find_config_table(EFI_acpi20_table_guid);

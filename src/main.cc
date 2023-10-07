@@ -190,7 +190,7 @@ static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, c
 }
 
 EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path,
-        const char *cmdLine);
+        const char *cmdLine, void *ramdisk, uint64_t ramdisk_size);
 
 struct menu_entry {
     enum entry_type_t {
@@ -202,12 +202,9 @@ struct menu_entry {
     entry_type_t entry_type = CHAIN;
     std::wstring exec_path;
     std::string cmdline;
+    std::wstring initrd_path;
 
     menu_entry() { }
-
-    menu_entry(const CHAR16 *description_p, entry_type_t entry_type_p, const CHAR16 *exec_path_p,
-            const char *cmdline_p)
-        : description(description_p), entry_type(entry_type_p), exec_path(exec_path_p), cmdline(cmdline_p) { }
 };
 
 void skip_ws(std::string_view &sv)
@@ -333,6 +330,9 @@ menu_entry parse_entry(std::string_view &conf)
             }
             else if (ident == "cmdline") {
                 entry.cmdline = std::move(value);
+            }
+            else if (ident == "initrd") {
+                entry.initrd_path = utf8toUCS2::convert(value.c_str());
             }
         }
         else {
@@ -606,26 +606,49 @@ EfiMain (
                     con_write_hex(status);
                 }
             } else {
+                void *ramdisk = nullptr;
+                uint64_t ramdisk_size = 0;
+                if (!entry.initrd_path.empty()) {
+                    EFI_DEVICE_PATH_PROTOCOL *ramdisk_devpath = resolve_relative_path(ImageHandle,
+                            entry.initrd_path.c_str());
+
+                    if (ramdisk_devpath == nullptr) goto reprompt;
+
+                    try {
+                        ramdisk = load_entire_file(ramdisk_devpath, &ramdisk_size);
+                        con_write(L"Loaded ramdisk\r\n"); // XXX
+                    }
+                    catch (load_file_exception &lfe) {
+                        con_write(L"Could not load ramdisk image");
+                        explain_load_file_failure(lfe);
+                        con_write(L"\r\n");
+                        goto reprompt;
+                    }
+                }
+
                 EFI_DEVICE_PATH_PROTOCOL *kernel_devpath = resolve_relative_path(ImageHandle,
                         entry.exec_path.c_str());
                 if (kernel_devpath != nullptr) {
-                    load_tsbp(ImageHandle, kernel_devpath, entry.cmdline.c_str());
+                    load_tsbp(ImageHandle, kernel_devpath, entry.cmdline.c_str(), ramdisk, ramdisk_size);
                     // if this fails an error message has already been displayed
                 }
             }
-            EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
-            con_write(L"\r\n\r\nTosaithe");
-            EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
-            con_write(L" boot menu - enter selection; [");
-            EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
-            con_write(L"space");
-            EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
-            con_write(L"] to show menu\r\n");
-            goto prompt_for_key;
         }
         catch (std::bad_alloc &b) {
             con_write(L"Error: not enough memory.\r\n");
         }
+
+        reprompt:
+
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+        con_write(L"\r\n\r\nTosaithe");
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+        con_write(L" boot menu - enter selection; [");
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
+        con_write(L"space");
+        EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
+        con_write(L"] to show menu\r\n");
+        goto prompt_for_key;
     }
     else if (key_pr.UnicodeChar == L'n') {
         if (entry_offs + 10 < menu.size()) {

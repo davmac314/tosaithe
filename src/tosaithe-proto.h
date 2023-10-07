@@ -43,6 +43,9 @@ struct tosaithe_loader_data {
     tsbp_kernel_mapping *kern_map;
     uint32_t kern_map_entries;
 
+    void *   ramdisk;       // initial ramdisk image (or null)
+    uint64_t ramdisk_size;  // size in bytes of ramdisk image (or 0)
+
     void *   acpi_rdsp;  // ACPI RDSP (Root Data Structure Pointer), if available
     void *   smbios3_entry; // SMBIOS 3.0+ (64-bit) "entry point" (table), if available
 
