@@ -776,7 +776,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                 if ((next_phdr.p_paddr - next_phdr.p_vaddr) != (phdr.p_paddr - phdr.p_vaddr))
                     break;
 
-                seg_size = (next_phdr.p_paddr - phdr.p_paddr) + next_phdr.p_filesz;
+                if (next_phdr.p_filesz != 0) {
+                    seg_size = (next_phdr.p_paddr - phdr.p_paddr) + next_phdr.p_filesz;
+                }
             }
 
             // We already have read a decent chunk when we read the ELF header (an amount given by
