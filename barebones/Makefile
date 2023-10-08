@@ -1,4 +1,4 @@
-CC = gcc -march=x86-64 -mno-red-zone -mgeneral-regs-only -fno-pie -fno-stack-protector -ffreestanding
+CC = gcc -march=x86-64 -mcmodel=kernel -mno-red-zone -mgeneral-regs-only -fno-pie -fno-stack-protector -ffreestanding
 CPPFLAGS = -I../include
 
 all: kernel.elf
