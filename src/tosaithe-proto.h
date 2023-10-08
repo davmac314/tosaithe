@@ -3,17 +3,44 @@
 
 // Tosaithe boot protocol definitions.
 
+#ifdef __cplusplus
 #include <cstdint>
+#else
+#include <stdint.h>
+#endif
+
+#ifdef __cplusplus
 
 static_assert(sizeof(void *) == 8, "this code needs adjusting for 32-bit environment");
 
+// forward declarations:
 struct tosaithe_loader_data;
 struct tsbp_mmap_entry;
 struct tsbp_kernel_mapping;
 
+#else
+
+typedef struct tosaithe_loader_data tosaithe_loader_data;
+typedef struct tsbp_mmap_entry tsbp_mmap_entry;
+typedef struct tsbp_kernel_mapping tsbp_kernel_mapping;
+typedef struct tosaithe_entry_header tosaithe_entry_header;
+
+#endif
+
+
+
+#ifdef __cplusplus
+
 struct tosaithe_hdr_flags {
     static const int REQ_FRAMEBUFFER = 1;
 };
+
+#else
+
+static const int tosaithe_hdr_flags_REQ_FRAMEBUFFER = 1;
+
+#endif
+
 
 // Entry header is a static structure which must be at offset 0 within the first segment of the
 // ELF file. Other details (including entry point) are in the ELF metadata.
@@ -74,6 +101,8 @@ struct tosaithe_loader_data {
     uint8_t  blue_mask_shift;
 };
 
+#ifdef __cplusplus
+
 enum class tsbp_mmap_type : uint32_t {
     USABLE                 = 0,
     RESERVED               = 1,
@@ -103,6 +132,47 @@ struct tsbp_mmap_flags {
     static const uint32_t UEFI_RUNTIME = 0x10;  // If set, required to be mapped by UEFI runtime services
 };
 
+struct tsbp_kernel_mapping_flags {
+    static const unsigned EXEC = 0x1;
+    static const unsigned WRITE = 0x2;
+    static const unsigned READ = 0x4;
+};
+
+#else
+
+static const uint32_t tsbp_mmap_type_USABLE            = 0;
+static const uint32_t tsbp_mmap_type_RESERVED          = 1;
+static const uint32_t tsbp_mmap_type_ACPI_RECLAIMABLE  = 2;
+static const uint32_t tsbp_mmap_type_ACPI_NVS          = 3;
+static const uint32_t tsbp_mmap_type_UEFI_RUNTIME_CODE = 4;
+static const uint32_t tsbp_mmap_type_UEFI_RUNTIME_DATA = 5;
+static const uint32_t tsbp_mmap_type_BAD_MEMORY        = 6;
+static const uint32_t tsbp_mmap_type_PERSISTENT_MEMORY = 7;
+static const uint32_t tsbp_mmap_type_BOOTLOADER_RECLAIMABLE = 0x1000;
+static const uint32_t tsbp_mmap_type_KERNEL            = 0x1001;
+static const uint32_t tsbp_mmap_type_FRAMEBUFFER       = 0x1002;
+
+typedef uint32_t tsbp_mmap_type;
+
+static const uint32_t tsbp_mmap_flags_CACHE_MASK       = 0x7;
+static const uint32_t tsbp_mmap_flags_CACHE_WB         = 0x0;
+static const uint32_t tsbp_mmap_flags_CACHE_WT         = 0x1;
+static const uint32_t tsbp_mmap_flags_CACHE_UC         = 0x2;
+static const uint32_t tsbp_mmap_flags_CACHE_WP         = 0x4;
+static const uint32_t tsbp_mmap_flags_CACHE_WC         = 0x5;
+
+static const uint32_t tsbp_mmap_flags_UEFI_RUNTIME     = 0x10;
+
+static const uint32_t tsbp_kernel_mapping_flags_EXEC   = 0x1;
+static const uint32_t tsbp_kernel_mapping_flags_WRITE  = 0x2;
+static const uint32_t tsbp_kernel_mapping_flags_READ   = 0x4;
+
+typedef struct tsbp_mmap_entry tsbp_mmap_entry;
+typedef struct tsbp_kernel_mapping tsbp_kernel_mapping;
+
+#endif
+
+
 struct tsbp_mmap_entry {
     uintptr_t base;
     uintptr_t length;
@@ -116,12 +186,6 @@ struct tsbp_kernel_mapping {
     uintptr_t base_virt;
     uintptr_t length;
     unsigned flags;
-};
-
-struct tsbp_kernel_mapping_flags {
-    static const unsigned EXEC = 0x1;
-    static const unsigned WRITE = 0x2;
-    static const unsigned READ = 0x4;
 };
 
 // Entry point details:
