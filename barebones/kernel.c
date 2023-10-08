@@ -7,9 +7,9 @@ extern struct opaque KERNEL_STACK_TOP;  // defined in linker script
 tosaithe_entry_header ts_entry_hdr __attribute__((section(".tsbp_hdr"), used)) = {
         'T' + ('S' << 8) + ('B' << 16) + ('P' << 24),
         0, // version
-        0, // min required loader version
-        (uintptr_t)&KERNEL_STACK_TOP,
-        1  // flags - require framebuffer
+        0, // min. required loader version
+        1, // flags - require framebuffer
+        (uintptr_t)&KERNEL_STACK_TOP
 };
 
 void tsbp_entry(tosaithe_loader_data *tosaithe_data)

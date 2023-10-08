@@ -48,10 +48,10 @@ struct tosaithe_entry_header {
     uint32_t signature; // = "TSBP"
     uint32_t version; // protocol version for this structure (= 0)
     uint32_t min_reqd_version; // the minimum required protocol version that loader must support
-    uintptr_t stack_ptr; // stack pointer on entry
     uint32_t flags;  //  bits 1-0:  00 = does not require framebuffer
                      //             01 = requires framebuffer
                      //             1x = reserved
+    uintptr_t stack_ptr; // stack pointer on entry
 };
 
 // The entry point receives a single argument: a pointer to a tosaithe_loader_data structure
