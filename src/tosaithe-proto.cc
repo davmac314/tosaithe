@@ -516,16 +516,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     // "bss" section which should be initialised to 0's then it is typically not stored in the
     // file.
 
-    // With Tosaithe boot protocol, we require:
-    //
-    // * each loadable segment has the same difference between file offset and virtual address
-    //   and this difference is positive (virtual address > file offset)
-    // * each loadable segment is at least page aligned (where "page" is any valid page size
-    //   for the architecture)
-    //
-    // This vastly simplifies loading as we don't have to worry about loading different parts of
-    // file in different places, and don't have to worry about handling access rights for pages
-    // which overlap two segments.
+    // With Tosaithe boot protocol, we require that each loadable segment is aligned according to
+    // its specified alignment and that each loadable segment has the same alignment. This is not
+    // normally an issue since segments will typically all be 4kb aligned.
 
     // Try to read in chunks of at least 128kb:
     const UINTN min_read_chunk = 128*1024u;
