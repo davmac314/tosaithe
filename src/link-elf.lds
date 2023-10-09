@@ -61,8 +61,6 @@ SECTIONS {
     /* Unfortunately, these cannot be retained in the PE format image. You must use --strip-debug
      * at link time or binutils produces a binary that OVMF (at least) refuses to load. */
 
-    . = ALIGN(0x1000);
-
     .debug_aranges 0 :  { *(.debug_aranges)  }
     .debug_str 0 :      { *(.debug_str)      }
     .debug_loc 0 :      { *(.debug_loc)      }
