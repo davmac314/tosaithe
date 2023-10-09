@@ -18,9 +18,9 @@ run: kernel.elf
 	cp kernel.elf bootdisk
 	qemu-system-x86_64 \
 	  -drive if=pflash,format=raw,unit=0,file=OVMF_CODE-pure-efi.fd,readonly=on \
-          -drive if=pflash,format=raw,unit=1,file=OVMF_VARS-pure-efi.fd \
-          -net none  \
-          -drive file=fat:rw:bootdisk,media=disk,format=raw
+      -drive if=pflash,format=raw,unit=1,file=OVMF_VARS-pure-efi.fd \
+      -net none  \
+      -drive file=fat:rw:bootdisk,media=disk,format=raw
 
 $(KERNEL_OBJECTS): %.o: %.c
 	$(CC) $(CPPFLAGS) $(CCFLAGS) -c $< -o $@
