@@ -808,11 +808,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                     return EFI_LOAD_ERROR;
                 }
             }
-
-            // We find the tosaithe entry header at the beginning of the first segment:
-            if (ts_entry_header == nullptr) {
-                ts_entry_header = (tosaithe_entry_header *)(kernel_alloc.get_ptr() + addr_offs);
-            }
         }
         else {
             ++i;
@@ -834,6 +829,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                 round_up_to_p2(phdr.p_memsz, seg_alignment),  // length
                 phdr.p_flags & 0x7 // X/W/R flags
             });
+
+            // We find the tosaithe entry header at the beginning of the first segment:
+            if (ts_entry_header == nullptr && phdr.p_memsz >= sizeof(tosaithe_entry_header)) {
+                void *potential_hdr = (void *)(kernel_alloc.get_ptr() + phdr.p_vaddr - lowest_vaddr);
+                if (memcmp(potential_hdr, "TSBP", 4) == 0) {
+                    ts_entry_header = (tosaithe_entry_header *)potential_hdr;
+                }
+            }
         }
     }
 
