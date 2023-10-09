@@ -1,11 +1,18 @@
+PHDRS
+{
+  text PT_LOAD FILEHDR PHDRS FLAGS(0x5) ; /* 0x5 = READ (0x4) + EXECUTE (0x1) */
+  data PT_LOAD ;
+  tsbp_hdr 0x64534250 ;
+}
+
 SECTIONS
 {
   /* load in the top-half "negative" address space, specifically -2GB, with a +2MB offset */
-  . = 0xffffffff80200000;
+  . = SEGMENT_START("text-segment", 0xffffffff80200000) + SIZEOF_HEADERS;
   
   .tsbp_hdr : {
     KEEP(*(.tsbp_hdr))
-  }
+  } :tsbp_hdr :text
 
   /* Uncomment if you will use static initialisers (needs runtime support): */
   /*
@@ -17,11 +24,10 @@ SECTIONS
   }
   */
 
-  . = ALIGN(0x1000);
   .text : {
     *(.text)
     *(.text.*)
-  }
+  } :text
   .rodata : {
     *(.rodata)
     *(.rodata.*)
@@ -32,7 +38,7 @@ SECTIONS
   .data : {
     *(.data)
     *(.data.*)
-  }
+  } :data
   .bss : {
     START_BSS = .;
     *(.bss)
@@ -45,6 +51,7 @@ SECTIONS
     END_BSS = .;
   }
 
+  /* Debug sections */
   .debug_aranges 0 : { *(.debug_aranges) }
   .debug_str 0 : { *(.debug_str) }
   .debug_loc 0 : { *(.debug_loc) }
@@ -56,4 +63,13 @@ SECTIONS
   .debug_pubtypes 0 : { *(.debug_pubtypes) }
   .debug_frame 0 : { *(.debug_frame) }
   .debug_line 0 : { *(.debug_line) }
+  
+  /DISCARD/ : {
+    /* discard some stuff that's not needed or problematic. */
+    *(.comment)
+    *(.note.gnu.property)
+    *(.note.GNU-stack)
+    *(.dynamic)
+    *(.eh_frame)
+  }
 }
