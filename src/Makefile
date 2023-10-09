@@ -1,6 +1,6 @@
-EFICFLAGS ?= -ffreestanding -fshort-wchar -maccumulate-outgoing-args -march=x86-64 -mno-sse -mno-mmx -mno-red-zone -fno-stack-protector
-# -mabi=ms
-CXXFLAGS ?= -g -Os -Wall -fno-rtti
+# These should be set from parent directory makefile:
+EFICFLAGS ?= "error: must set EFICFLAGS"
+CXXFLAGS ?= "error: must set CXXFLAGS"
 
 # (Not needed if using primary link method below)
 #ELF2EFI64=elf2efi64
