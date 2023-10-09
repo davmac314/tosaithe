@@ -113,8 +113,9 @@ enum class tsbp_mmap_type : uint32_t {
     BAD_MEMORY             = 6,
     PERSISTENT_MEMORY      = 7,  // persistent; precise meaning/use is system-dependent
     BOOTLOADER_RECLAIMABLE = 0x1000, // tosaithe loader data structure, memory map, command line, etc
-    KERNEL_AND_MODULES     = 0x1001,
-    FRAMEBUFFER            = 0x1002
+    KERNEL                 = 0x1001,
+    RAMDISK                = 0x1002,
+    FRAMEBUFFER            = 0x1003
 };
 
 struct tsbp_mmap_flags {
@@ -150,7 +151,8 @@ static const uint32_t tsbp_mmap_type_BAD_MEMORY        = 6;
 static const uint32_t tsbp_mmap_type_PERSISTENT_MEMORY = 7;
 static const uint32_t tsbp_mmap_type_BOOTLOADER_RECLAIMABLE = 0x1000;
 static const uint32_t tsbp_mmap_type_KERNEL            = 0x1001;
-static const uint32_t tsbp_mmap_type_FRAMEBUFFER       = 0x1002;
+static const uint32_t tsbp_mmap_type_RAMDISK           = 0x1002;
+static const uint32_t tsbp_mmap_type_FRAMEBUFFER       = 0x1003;
 
 typedef uint32_t tsbp_mmap_type;
 

@@ -87,6 +87,51 @@ void *load_entire_file(EFI_DEVICE_PATH_PROTOCOL *dev_path, UINTN *buf_size_ptr)
     return load_address;
 }
 
+// Load an entire file, into a page allocation rather than a pool allocation.
+efi_page_alloc load_file_pages(EFI_DEVICE_PATH_PROTOCOL *dev_path, UINTN *buf_size_ptr)
+{
+    EFI_FILE_PROTOCOL *file_to_load;
+    try {
+        file_to_load = open_file(dev_path);
+    }
+    catch (open_file_exception &ofe) {
+        if (ofe.reason == open_file_exception::NO_FSPROTOCOL_FOR_DEV_PATH) {
+            throw load_file_exception(load_file_exception::NO_FSPROTOCOL_FOR_DEV_PATH);
+        }
+        else if (ofe.reason == open_file_exception::CANNOT_OPEN_VOLUME) {
+            throw load_file_exception(load_file_exception::CANNOT_OPEN_VOLUME, ofe.status);
+        }
+        else if (ofe.reason == open_file_exception::NO_DPTT_PROTOCOL) {
+            throw load_file_exception(load_file_exception::NO_DPTT_PROTOCOL);
+        }
+        else /* CANNOT_OPEN_FILE */ {
+            throw load_file_exception(load_file_exception::CANNOT_OPEN_FILE, ofe.status);
+        }
+    }
+
+    efi_file_handle file_to_load_hndl { file_to_load };
+
+    EFI_FILE_INFO *load_file_info = get_file_info(file_to_load);
+    if (load_file_info == nullptr) {
+        throw load_file_exception(load_file_exception::CANNOT_GET_FILE_SIZE);
+    }
+
+    UINTN read_amount = load_file_info->FileSize;
+    free_pool(load_file_info);
+
+    efi_page_alloc pages;
+    pages.allocate((read_amount + 4095) / 4096);
+
+    void *load_address = (void *)pages.get_ptr();
+    EFI_STATUS status = file_to_load_hndl.read(&read_amount, load_address);
+    if (EFI_ERROR(status)) {
+        throw load_file_exception(load_file_exception::CANNOT_READ_FILE, status);
+    }
+
+    if (buf_size_ptr) *buf_size_ptr = read_amount;
+    return pages;
+}
+
 static EFI_DEVICE_PATH_PROTOCOL *resolve_relative_path(EFI_HANDLE image_handle, const CHAR16 *path)
 {
     EFI_DEVICE_PATH_FROM_TEXT_PROTOCOL *text2dp_proto =
@@ -190,7 +235,7 @@ static EFI_STATUS chain_load(EFI_HANDLE image_handle, const CHAR16 *exec_path, c
 }
 
 EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path,
-        const char *cmdLine, void *ramdisk, uint64_t ramdisk_size);
+        const char *cmdLine, uintptr_t ramdisk, uint64_t ramdisk_size);
 
 struct menu_entry {
     enum entry_type_t {
@@ -606,7 +651,7 @@ EfiMain (
                     con_write_hex(status);
                 }
             } else {
-                void *ramdisk = nullptr;
+                efi_page_alloc ramdisk;
                 uint64_t ramdisk_size = 0;
                 if (!entry.initrd_path.empty()) {
                     EFI_DEVICE_PATH_PROTOCOL *ramdisk_devpath = resolve_relative_path(ImageHandle,
@@ -615,8 +660,7 @@ EfiMain (
                     if (ramdisk_devpath == nullptr) goto reprompt;
 
                     try {
-                        ramdisk = load_entire_file(ramdisk_devpath, &ramdisk_size);
-                        con_write(L"Loaded ramdisk\r\n"); // XXX
+                        ramdisk = load_file_pages(ramdisk_devpath, &ramdisk_size);
                     }
                     catch (load_file_exception &lfe) {
                         con_write(L"Could not load ramdisk image");
@@ -629,7 +673,7 @@ EfiMain (
                 EFI_DEVICE_PATH_PROTOCOL *kernel_devpath = resolve_relative_path(ImageHandle,
                         entry.exec_path.c_str());
                 if (kernel_devpath != nullptr) {
-                    load_tsbp(ImageHandle, kernel_devpath, entry.cmdline.c_str(), ramdisk, ramdisk_size);
+                    load_tsbp(ImageHandle, kernel_devpath, entry.cmdline.c_str(), ramdisk.get_ptr(), ramdisk_size);
                     // if this fails an error message has already been displayed
                 }
             }

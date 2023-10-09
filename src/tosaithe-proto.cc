@@ -479,7 +479,7 @@ EFI_MEMORY_DESCRIPTOR *efi_memmap_find(UINTN addr, EFI_MEMORY_DESCRIPTOR *memmap
 
 // Load a kernel via the TSBP (ToSaithe Boot Protocol)
 EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exec_path, const char *cmdLine,
-        void *ramdisk, uint64_t ramdisk_size)
+        uintptr_t ramdisk, uint64_t ramdisk_size)
 {
     efi_file_handle kernel_handle;
     UINTN kernel_file_size = 0;
@@ -1268,7 +1268,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     loader_data.version = 0;
     loader_data.flags = 0;
     loader_data.cmdline = cmdLine;
-    loader_data.ramdisk = ramdisk;
+    loader_data.ramdisk = (void *)ramdisk;
     loader_data.ramdisk_size = ramdisk_size;
     // .memmap/.memmap_entries set below after construction of the map
 
@@ -1456,11 +1456,16 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     }
 
     // Insert memory-map entries for kernel
-    tsbp_memmap.insert_entry(tsbp_mmap_type::KERNEL_AND_MODULES, kernel_alloc.get_ptr(),
+    tsbp_memmap.insert_entry(tsbp_mmap_type::KERNEL, kernel_alloc.get_ptr(),
             kernel_alloc.page_count() * PAGE4KB, tsbp_mmap_flags::CACHE_WB);
 
     if (fb_size != 0) {
         tsbp_memmap.insert_entry(tsbp_mmap_type::FRAMEBUFFER, fb_region, fb_size, tsbp_mmap_flags::CACHE_WC);
+    }
+
+    if (ramdisk != 0) {
+        tsbp_memmap.insert_entry(tsbp_mmap_type::RAMDISK, ramdisk,
+                round_up_to_p2(ramdisk_size, PAGE4KB), tsbp_mmap_flags::CACHE_WB);
     }
 
     tsbp_memmap.sort();
@@ -1475,10 +1480,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     loader_data.efi_memmap_size = memMapSize;
     loader_data.efi_system_table = EST;
 
-    // TODO modules
-
-    // Enable paging (4-level)
-
+    // Enable paging (4-level).
     // We can't change the paging mode once while paging is enabled, and we can't disable paging
     // while in long mode. We'd need to transition to 32-bit mode to disable paging, sigh.
     // We'll put that on the TODO list. For now, since we currently only handle 4-level paging,
