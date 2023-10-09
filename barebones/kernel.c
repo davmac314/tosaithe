@@ -4,7 +4,7 @@ struct opaque;
 
 extern struct opaque KERNEL_STACK_TOP;  // defined in linker script
 
-tosaithe_entry_header ts_entry_hdr __attribute__((section(".tsbp_hdr"), used)) = {
+static tosaithe_entry_header ts_entry_hdr __attribute__((section(".tsbp_hdr"), used)) = {
         'T' + ('S' << 8) + ('B' << 16) + ('P' << 24),
         0, // version
         0, // min. required loader version
