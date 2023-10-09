@@ -1,7 +1,12 @@
 # TSBP - TOSAITHE BOOT PROTOCOL
 
-This is boot protocol for handover between bootloaders and OS kernels, on x86-64 architecture.
-It is designed to minimise implementation requirements on both loader and kernel sides.
+_Preliminary revision_
+
+Tosaithe, or _TSBP_, is a boot protocol for handover between bootloaders and OS kernels, on x86-64
+architecture. It is designed to minimise implementation requirements on both loader and kernel
+sides, but provides a range of features that may be required by advanced systems.
+
+This document defines the protocol requirements for the bootloader and kernel.
 
 ## TSBP header for C and C++
 
@@ -190,10 +195,11 @@ The `tbsp_mmap_type` field takes one of the following values:
   once it no longer needs the tables.
 - `tbsp_mmap_type::ACPI_NVS` - the memory is used by ACPI firmware and the OS should not use the
   memory or map MMIO into the address range.
-- `tbsp_mmap_type::UEFI_RUNTIME_CODE` - the memory contains UEFI firmware code; it can be used by
-  the OS if it will not use UEFI runtime services.
-- `tbsp_mmap_type::UEFI_RUNTIME_DATA` - the memory contains UEFI firmware data; it can be used by
-  the OS if it will not use UEFI runtime services.
+- `tbsp_mmap_type::UEFI_RUNTIME_CODE`, `tbsp_mmap_type::UEFI_RUNTIME_DATA` - the memory contains
+  UEFI firmware code or data; it can be used by the OS if it will not use UEFI runtime services.
+  Note: if the OS will use UEFI runtime services with an alternative address map established via
+  the `SetVirtualAddressMap()` UEFI runtime service function, it must provide a mapping for this
+  memory region as part of that call.
 - `tbsp_mmap_type::BAD_MEMORY` - the memory in this region is known to be faulty, and should not
   be used.
 - `tbsp_mmap_type::PERSISTENT_MEMORY` - the memory in this range is persistent (the contents

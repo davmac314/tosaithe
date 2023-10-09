@@ -1,7 +1,6 @@
 # Tosaithe
 
-**This is a work-in-progress!**
-(it somewhat works, but is not complete).
+_Preliminary - no official release yet_
 
 Tosaithe is a minimalistic UEFI-firmware menu/bootloader. It can chain-load other EFI programs
 and loaders, including Linux kernels, and has basic support for a bespoke boot protocol and
@@ -15,7 +14,9 @@ satisfied with other alternatives, for various reasons, I decided (in the true s
 development) to write one myself. Other bootloaders available at the time did not fit my
 requirements. 
 
-Tosaithe mainly serves now as:
+Tosaithe mainly serves now as the reference implementation for the Tosaithe Boot Protocol (TSBP).
+
+It is also:
 
 * An example UEFI bootloader / boot menu
 * ... written in C++, exceptions and all
@@ -27,22 +28,24 @@ together provide a C++ runtime and standard library.
 
 ## The Tosaithe boot protocol (TSBP)
 
-To be completed...
+There is a [specification document](doc/TSBP.md) for the protocol in this repository.
+
+A "Bare Bones" [example](barebones/) is also included.
 
 Key features:
 
-* Uses ELF format kernels
-* Kernels are loaded at an arbitrary physical address, and mapped into the correct virtual address
-  (according to the program headers)
-* ...
+* Uses ELF format kernels, easily constructed with commonly available toolchains
+* Kernels are loaded and mapped into the "high half" (or "negative") address space by the loader
+* Memory map, firmware information, and framebuffer details are passed to the kernel
+* Supports passing kernel command line and initial ramdisk image
 
 ## Building Tosaithe
 
-Requires GCC and Binutils (may or may not work with Clang/LLVM/LLD). I have built with GCC 11.4.0
-and Binutils 2.39. I recommend not trying to use older Binutils as there have been bugs with the
-PE+ output format support. Binutils must have been built with appropriate support (this is usually
-the case with distro-provided Binutils, use `--enable-targets=x86_64-none-pe,x86_64-none-pep` when
-configuring if building it yourself).
+Requires GCC and Binutils (builds with Clang, but requires GNU Binutilfs "BFD" linker). I have
+built with GCC 11.4.0 and Binutils 2.39. I recommend not trying to use older Binutils as there
+have been bugs with the PE+ output format support. Binutils must have been built with appropriate
+support (this is usually the case with distro-provided Binutils, use
+`--enable-targets=x86_64-none-pe,x86_64-none-pep` when configuring if building it yourself).
 
 1. `sh clone-libs.sh` or `sh clone-libs.sh https` to clone the dependencies. Use the latter to
     clone via https, which avoids needing to have your ssh public key enrolled with Github.
@@ -53,9 +56,8 @@ configuring if building it yourself).
 
 Copy `tosaithe.efi` to your EFI system partition. You can copy it over `\EFI\BOOT\bootx64.efi` in
 order to boot with it (maybe), but I highly recommend you don't do that until you're sure that it
-works; copy it somewhere else and run it via Grub or the UEFI shell for example. (Check your
-motherboard manual for access to see if UEFI shell access is possible; check web for help using
-it). 
+works; copy it somewhere else and run it via Grub or the UEFI shell for example. Documentation for
+these is found elsewhere.
 
 You will need a `tosaithe.conf` text file (UTF-8) in the root directory of the same partition. This
 should look something like:
@@ -111,7 +113,7 @@ An example path looks something like:
 ```
 PciRoot(0x0)/Pci(0x3,0x0)/Sata(0x0,0xFFFF,0x0)/HD(1,MBR,0xBE1AFDFA,0x3F,0xFBC1)/\some\file.txt
 ```
-(Yes, UEFI paths are unwieldy).
+(Yes, UEFI paths are unwieldy!).
 
 ## Using Tosaithe
 
