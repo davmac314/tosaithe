@@ -8,7 +8,7 @@ sides, but provides a range of features that may be required by advanced systems
 
 This document defines the protocol requirements for the bootloader and kernel.
 
-## TSBP header for C and C++
+## TSBP Header for C and C++
 
 A header file for C and C++ is provided defining the types and constants used by this
 specification. The header is named `tosaithe-proto.h`.
@@ -18,7 +18,7 @@ These names are usable in C++ code; for C code, a usuable name can be derived by
 an underscore (`_`) for the scope operator (`::`). For the `CACHE_MASK` example, the usable C
 name is `tbsp_mmap_flags_CACHE_MASK`.
 
-## Kernel file requirements
+## Kernel File Requirements
 
  * Kernel must be structured as an ELF file, with no relocations.
  * At offset 0 in any loadable ELF segment (i.e. of type `PT_LOAD`) a `tosaithe_entry_header`
@@ -35,7 +35,7 @@ name is `tbsp_mmap_flags_CACHE_MASK`.
 Note: many of these requirements will be satisfied as a natural outcome of the usual linking
 process.
 
-## How the kernel is loaded
+## How the Kernel is Loaded
 
  * The kernel will be loaded into physically contiguous memory, but at an arbitrary physical
    address. Segment alignment will be honoured.
@@ -63,7 +63,7 @@ It contains the following fields:
   - other bits are reserved and should be set to 0. 
 - `uintptr_t stack_ptr` - the stack pointer that should be established on entry to the kernel.
 
-## Entry to kernel
+## Entry To Kernel
 
  * The processor is in 64-bit long mode (IA-32e mode).
  * The CS/DS/SS descriptors select 64-bit segments. CS will select the first segment (after the
@@ -82,15 +82,15 @@ It contains the following fields:
    (and any referenced structures) use physical addresses.
  * UEFI Boot Services are not available. Note: UEFI Runtime services may be available.
 
-## Address mapping (page table setup)
+## Address Mappings
 
  * On entry to kernel, physical memory (as described in the memory map provided) is mapped
    linearly at address 0 and again at `0xFFFF_8000_0000_0000` (i.e. the lowest higher-half address
    in 4-level paging mode).
  * Regardless of the memory map provided, the entire first 4GB will be identity mapped (with
    mapping mirrored in the top-half); this allows for LAPIC/IOAPIC access for example.
- * The kernel is mapped according to its virtual load address, which must be 0xfff_ffff_f800_00000
-   or greater, putting it in the range [-2gb, 0). Note: this allows for efficient code generation
+ * The kernel is mapped according to its virtual load address, which must be 0xFFFF_FFFF_8000_0000
+   or greater, putting it in the range (-2gb, 0). Note: this allows for efficient code generation
    using the "kernel" model provided by GCC (`-mcmodel=kernel`) for example, and prevents conflict
    with other mappings.
  * Any mapped memory is mapped using pages of an unspecified (and possibly heterogeneous) size.
@@ -99,9 +99,9 @@ It contains the following fields:
    page tables as early as possible.
 
 
-## Loader data structure
+## Loader Data Structure
 
-The kernel entry point is provided with a pointer to an instance of a ``tosaithe_loader_data`
+The kernel entry point is provided with a pointer to an instance of a `tosaithe_loader_data`
 structure, which the bootloader fills to provide system information to the kernel.
 
 It contains the following fields:
@@ -121,7 +121,7 @@ It contains the following fields:
 - `uint64_t ramdisk_size` - size of the ramdisk image that was loaded by the bootloader, or zero
   if none.
 
-### Firmware information
+### Firmware Information
 
 The following fields provide firmware such as pointers to firmware-provided tables:
 
@@ -135,7 +135,7 @@ The following fields provide firmware such as pointers to firmware-provided tabl
 - `void *efi_system_table` - pointer to the UEFI firmware system table, if available. Note: Boot
   services will not be available to the kernel.
 
-### Frame buffer
+### Framebuffer
 
 The following fields provide information about a framebuffer established by the firmware or
 bootloader. Fields are set to 0 if there is no framebuffer available.
@@ -217,7 +217,7 @@ The `tbsp_mmap_type` field takes one of the following values:
 - `tbsp_mmap_type::FRAMEBUFFER` - the memory contains a graphics framebuffer, passed to the kernel
   via the `framebuffer_addr` pointer.
 
-## Kernel mappings
+## Kernel Mappings
 
 The kernel mappings table, found via the `kern_map` (and `kern_map_entries`) field in the loader
 data, specifies where each segment of the kernel ELF image is located in physical memory as well
