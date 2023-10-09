@@ -810,6 +810,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             }
         }
         else {
+            // Magic "TSBP"+0x10000000 p_type segment?
+            if (phdr.p_type == 0x64534250) {
+                if (phdr.p_vaddr >= lowest_vaddr
+                        && (phdr.p_vaddr + sizeof(tosaithe_entry_header)) <= highest_vaddr
+                        && (phdr.p_vaddr & 7) == 0) {
+                    ts_entry_header = (tosaithe_entry_header *)(kernel_alloc.get_ptr() + phdr.p_vaddr - lowest_vaddr);
+                }
+            }
             ++i;
         }
     }
