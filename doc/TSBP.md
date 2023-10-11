@@ -2,21 +2,75 @@
 
 _Preliminary revision_
 
+## Introduction
+
 Tosaithe, or _TSBP_, is a boot protocol for handover between bootloaders and OS kernels, on x86-64
 architecture. It is designed to minimise implementation requirements on both loader and kernel
 sides, but provides a range of features that may be required by advanced systems.
 
 This document defines the protocol requirements for the bootloader and kernel.
 
-## TSBP Header for C and C++
+The bootloader is responsible for loading the kernel from storage, establishing an appropriate
+environment including the provision of system information, and then passing control to the kernel.
+Specifically, the bootloader:
+
+ * Loads the kernel image (and any ramdisk image) into memory.
+ * Establishes a structure with system information and parameters (such as kernel command line)
+   for use by the kernel. This includes a memory map detailing the availability of memory and
+   address ranges.
+ * Creates a page table structure so that the kernel is mapped (virtually addressable) at its
+   preferred address, and that other areas of memory are available.
+ * Ensures that the processor state is suitable, and jumps to the kernel entry point.
+
+The specific means by which the loader loads the kernel image, determines the kernel command line,
+and how the loader is configured, are out of scope and are not covered by this document.
+Similarly, the mechanism by which the bootloader itself is started and the environment in which it
+runs are not specified; however, there are some requirements for information about certain
+environments to be passed to the kernel (for example, the UEFI system table must be passed from
+the loader to the kernel if the loader executes in the UEFI environment). 
+
+The following sections describe:
+ * The format of a compliant kernel image, in detail.
+ * How the kernel can (statically) communicate requirements to the loader, via information
+   embedded in the kernel image.
+ * The specific information that is passed from the bootloader to the kernel.
+ * The specific processor state that is established before execution of the kernel begins.
+   
+This specification is not intended to imply any specific implementation of either loader or kernel
+beyond the requirements explicitly listed. It is intended that a loader and kernel that are both
+compliant with this specification should be compatible with each other, regardless of how either
+individual component is implemented. 
+
+### Conventions
+
+Structures are specified as a sequence of fields with their types, with the type name first
+followed by the field name. A set of standard types are used as defined in C/C++, in particular:
+
+ * `char` is a single byte.
+ * `uintN_t` for some N means an unsigned integer of bit size N.
+ * A pointer to a particular type is written as `type *` where `type` is the name of pointee type.
+ * A pointer to no particular type is written as `void *`.
+ * A pointer to a value that is not intended to be modified is written as `const type *` (where
+   `type` is the name of the pointee type). That the value not be modified is advisory, unless
+   otherwise stated.
+
+Structure fields are aligned to the size of their type, unless otherwise stated. Pointer types are
+64-bits in size and aligned to a 64-bit boundary. Structures as a whole are aligned according to
+alignment of their largest field.
+
+### TSBP Header for C and C++
 
 A header file for C and C++ is provided defining the types and constants used by this
 specification. The header is named `tosaithe-proto.h`.
 
 In some case this specification refers to scoped names such as `tbsp_mmap_flags::CACHE_MASK`.
-These names are usable in C++ code; for C code, a usuable name can be derived by substituting
-an underscore (`_`) for the scope operator (`::`). For the `CACHE_MASK` example, the usable C
-name is `tbsp_mmap_flags_CACHE_MASK`.
+These names are usable as-is in C++ code; for C code, a usuable name can be derived by
+substituting an underscore (`_`) for the scope operator (`::`). For the `CACHE_MASK` example, the
+usable C name is `tbsp_mmap_flags_CACHE_MASK`.
+
+Note: it is not intended that implementation be limited to C and C++ only, but headers or
+equivalent definitions for other languages are not as yet provided.
+
 
 ## Kernel File Requirements
 
