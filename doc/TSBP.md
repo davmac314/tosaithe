@@ -66,9 +66,10 @@ It contains the following fields:
 ## Entry To Kernel
 
  * The processor is in 64-bit long mode (IA-32e mode).
- * The CS/DS/SS descriptors select 64-bit segments. CS will select the first segment (after the
-   null segment) from the GDT and DS/SS will second the following segment. Note: it is recommended
-   that the kernel establish its own GDT early.
+ * The CS descriptor selects a 64-bit code segment; specifically, the first segment (after the
+   null segment) from the GDT. DS/SS will be set to the null segment selector.
+   Note: in long mode the null selector may be used for DS/SS just as any other valid selector.
+   Note: it is recommended that the kernel establish its own GDT as soon as reasonably possible.
  * The stack pointer is set as per required by the kernel (as specified in the entry header). A
    single value (an invalid return address) will be pushed onto the stack. Note: the kernel should
    specify a stack pointer that ensures any required alignment of the stack pointer for the entry

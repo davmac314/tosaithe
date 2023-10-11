@@ -192,9 +192,8 @@ struct tsbp_kernel_mapping {
 
 // Entry point details:
 
-// x86-64 (the only currently supported architecture). A GDT with a null entry, code segment and
-// data segment is provided.
+// x86-64 (the only currently supported architecture). A GDT with a null entry and code segment
+// is provided. DS/SS use the null selector.
 static const int TOSAITHE_CS_SEG = 1*8; // 2nd 8-byte entry
-static const int TOSAITHE_DS_SEG = 2*8; // 3rd 8-byte entry
 
 #endif

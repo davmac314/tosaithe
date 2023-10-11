@@ -993,8 +993,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     // fine-grained than the existing mapping(s) (i.e. if the new page size will be equal or smaller, across
     // all of the mapped range).
     //
-    // page_attrs - can include Writable (0x2), NX/XD (not executable/execute disable) (1<<63).
-    //              NX/XD requires processor support.
+    // page_attrs - can include Writable (0x2) only;
+    //              NX/XD (1 << 63) is not used, as it should not be used unless it is enabled in IA32_EFER.
     auto do_mapping = [&](uintptr_t virt_addr, uintptr_t phys_addr_beg, uintptr_t phys_addr_end, memory_types mem_type,
             uint64_t page_attrs) {
         uintptr_t virt_phys_diff = virt_addr - phys_addr_beg;
@@ -1579,7 +1579,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                 // out to be pretty tricky in long mode. But handily, this will load SS:RSP at the
                 // same time.
 
-                    "pushq %[dsseg]\n" // SS
+                    "pushq $0\n"       // SS
                     "pushq %1\n"       // RSP
                     "pushfq\n"
                     "pushq %[csseg]\n" // CS
@@ -1596,14 +1596,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                 // the only thing we really need now is the target address (in a register).
 
                 "long_jmp_after_gdt_load:\n"
-                    "movl %[dsseg], %%eax\n"
+                    "movl $0, %%eax\n"
                     "movl %%eax, %%ds\n"
                     "pushq $0x0\n"  // invalid return address
                     "jmpq %A2"
 
                 :
                 : "m"(gdt_desc), "rm"(kern_stack_top), "r"(kern_entry), "D"(&loader_data),
-                  [csseg] "i"(TOSAITHE_CS_SEG), [dsseg] "i"(TOSAITHE_DS_SEG)
+                  [csseg] "i"(TOSAITHE_CS_SEG)
                 : "rax"
         );
 
