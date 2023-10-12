@@ -124,3 +124,9 @@ keyboard.
 Use the 'n' and 'p' to navigate to the next and previous page, respectively, if there are more
 than 10 entries in the menu. Use 'x' to exit Tosaithe, 's' to shut down the system. Press space
 to refresh the display of menu items.
+
+## Alternatives
+
+If you are looking for a boot menu / bootloader / protocol and Tosaithe doesn't cut it for you,
+I strongly recommend checking out [Limine](https://github.com/limine-bootloader/limine); see its
+protocol specification [here](https://github.com/limine-bootloader/limine/blob/trunk/PROTOCOL.md).
