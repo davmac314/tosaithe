@@ -85,7 +85,7 @@ struct tosaithe_loader_data {
 
     // Framebuffer info (addr/size are 0 if not available)
 
-    uintptr_t framebuffer_addr;   // physical address of the framebuffer (0 if none available)
+    void * framebuffer_addr;      // physical address of the framebuffer (null if none available)
     uintptr_t framebuffer_size;   // size in bytes of the framebuffer, rounded up to page boundary
     uint16_t framebuffer_width;   // width in pixels
     uint16_t framebuffer_height;  // height in pixels

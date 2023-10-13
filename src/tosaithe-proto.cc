@@ -348,7 +348,7 @@ static void check_framebuffer(tosaithe_loader_data *fbinfo)
         return; // framebuffer not available
     }
 
-    fbinfo->framebuffer_addr = graphics->Mode->FrameBufferBase;
+    fbinfo->framebuffer_addr = (void *)graphics->Mode->FrameBufferBase;
     fbinfo->framebuffer_width = graphics->Mode->Info->HorizontalResolution;
     fbinfo->framebuffer_height = graphics->Mode->Info->VerticalResolution;
     fbinfo->framebuffer_pitch = graphics->Mode->Info->PixelsPerScanLine
@@ -1298,7 +1298,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     if (fb_size != 0) {
         // Need to map the framebuffer in
-        uintptr_t fb_addr = loader_data.framebuffer_addr;
+        uintptr_t fb_addr = (uintptr_t)loader_data.framebuffer_addr;
         fb_region = fb_addr;
 
         // See if there is an existing mapping for the framebuffer. There shouldn't be, but if there does
