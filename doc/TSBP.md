@@ -48,6 +48,7 @@ followed by the field name. A set of standard types are used as defined in C/C++
 
  * `char` is a single byte.
  * `uintN_t` for some N means an unsigned integer of bit size N.
+ * `uintptr_t` is an unsigned integer that is the same size as a pointer (64 bits).
  * A pointer to a particular type is written as `type *` where `type` is the name of pointee type.
  * A pointer to no particular type is written as `void *`.
  * A pointer to a value that is not intended to be modified is written as `const type *` (where
@@ -55,7 +56,7 @@ followed by the field name. A set of standard types are used as defined in C/C++
    otherwise stated.
 
 Structure fields are aligned to the size of their type, unless otherwise stated. Pointer types are
-64-bits in size and aligned to a 64-bit boundary. Structures as a whole are aligned according to
+8 bytes in size and aligned to an 8-byte boundary. Structures as a whole are aligned according to
 alignment of their largest field.
 
 ### TSBP Header for C and C++
@@ -74,34 +75,31 @@ equivalent definitions for other languages are not as yet provided.
 
 ## Kernel File Requirements
 
- * Kernel must be structured as an ELF file, with no relocations.
+The protocol recognises kernels in the ELF file format. ELF is a very flexible format, and there
+are some restrictions on some specifics of the structure that must be applied to the kernel.
+The main requirement is that a _Tosaithe Entry Header_ be present (see relevant section below).
+There are some other minor restrictions, many of which may be satisified as a natural outcome
+of the usual linking process; they are listed here.
+
+ * The kernel must be structured as an ELF file, with no relocations.
  * At offset 0 in any loadable ELF segment (i.e. of type `PT_LOAD`) a `tosaithe_entry_header`
    structure, including valid signature, must be present. Alternatively, a non-loadable segment
    of type `0x64534250` must be present and contain the header (which must also be present in a
-   loadable segment). The header must be aligned on an 8-byte boundary. See the **Tosaithe Entry
-   Header** section below.
+   loadable segment); in this case, the header must also be contained anywhere within a loadable
+   segment. The header must be aligned to an 8-byte boundary.
  * Kernel virtual address must be somewhere in the top 2GB of the "negative" portion of the
-   address space (i.e. from `0xFFFF_FFFF_8000_0000` to `0xFFFF_FFFF_FFFF_FFFF`). Note: the
-   "negative" portion is also referred to as the "higher half".
+   address space (i.e. from `0xFFFF_FFFF_8000_0000` to `0xFFFF_FFFF_FFFF_FFFF`). \
+   Note: the "negative" portion is also referred to as the "higher half".
  * Loadable segments must not overlap.
  * Segment alignment must be 4kb, 2mb or 1gb; all segments must have the same alignment.
 
-Note: many of these requirements will be satisfied as a natural outcome of the usual linking
-process.
-
-## How the Kernel is Loaded
-
- * The kernel will be loaded into physically contiguous memory, but at an arbitrary physical
-   address. Segment alignment will be honoured.
- * Any parts of a loadable segment that are not present in the file (i.e. for segments where the
-   size in memory is larger than the size in file) will be zero-filled. (Note: this allows for
-   a standard ".bss" section).
+The format of the Tosaithe Entry Header is detailed in the following section.
 
 ## Tosaithe Entry Header
 
-The Tosaithe Entry Header (`tosaithe_entry_header` structure) must be present at the beginning of
-the first segment in the kernel executable. This structure statically communicates information
-from the kernel to the bootloader.
+The Tosaithe Entry Header (`tosaithe_entry_header` structure) must be present in the kernel, such
+that it can be located by the bootloader (see the requirements in **Kernel File Requirements**
+above).
 
 It contains the following fields:
 
@@ -117,17 +115,36 @@ It contains the following fields:
   - other bits are reserved and should be set to 0. 
 - `uintptr_t stack_ptr` - the stack pointer that should be established on entry to the kernel.
 
+## How the Kernel is Loaded
+
+The kernel is loaded by the bootloader according to its own processes and conventions. The
+following restrictions apply:
+
+ * The kernel will be loaded into physically contiguous memory, but at an arbitrary physical
+   address. Segment alignment will be honoured.
+ * Any parts of a loadable segment that are not present in the file (i.e. for segments where the
+   size in memory is larger than the size in file) will be zero-filled. \
+   Note: this allows for a standard ".bss" section.
+
+
 ## Entry To Kernel
+
+The bootloader transfers control by jumping to execution at the entry point (specified via the ELF
+header). The entry function is passed a single parameter, a pointer to the TSBP loader data
+structure (detailed in a section below), in the `rdi` register. \
+Note: this corresponds to the SysV ABI calling convention.
+
+Additionally:
 
  * The processor is in 64-bit long mode (IA-32e mode).
  * The CS descriptor selects a 64-bit code segment; specifically, the first segment (after the
-   null segment) from the GDT. DS/SS will be set to the null segment selector.
-   Note: in long mode the null selector may be used for DS/SS just as any other valid selector.
+   null segment) from the GDT. DS/SS will be set to the null segment selector. \
+   Note: in long mode the null selector may be used for DS/SS just as any other valid selector. \
    Note: it is recommended that the kernel establish its own GDT as soon as reasonably possible.
  * The stack pointer is set as per required by the kernel (as specified in the entry header). A
-   single value (an invalid return address) will be pushed onto the stack. Note: the kernel should
-   specify a stack pointer that ensures any required alignment of the stack pointer for the entry
-   function.
+   single value (an invalid return address) will be pushed onto the stack. \
+   Note: the kernel should specify a stack pointer that ensures any required alignment of the
+   stack pointer for the entry function.
  * Interrupts are disabled at the processor level (i.e. the interrupt enable bit in the EFLAGS
    register is clear).
  * The direction flag (DF) is clear.
@@ -135,38 +152,71 @@ It contains the following fields:
  * The entry point receives a single argument, a pointer to the `tosaithe_loader_data` structure
    (see **Loader data structure** below). Pointers within the `tosaithe_loader_data` structure
    (and any referenced structures) use physical addresses.
- * UEFI Boot Services are not available. Note: UEFI Runtime services may be available.
+ * UEFI Boot Services are not available. \
+   Note: UEFI Runtime services may be available.
+ * Page tables have been constructed to implement the address mappings discussed in the next
+   section.
 
-## Address Mappings
+The Page Attribute Table (PAT) is set up (via the `IA32_PAT` MSR) with the following entries:
 
- * On entry to kernel, physical memory (as described in the memory map provided) is mapped
-   linearly at address 0 and again at `0xFFFF_8000_0000_0000` (i.e. the lowest higher-half address
-   in 4-level paging mode).
+ * 0 - 06; Write-back (WB)
+ * 1 - 04; Write-throught (WT)
+ * 2 - 07; Uncached, overridable by MTRRs (UC-)
+ * 3 - 00; Uncached (UC)
+ * 4 - 05; Write protected (WP)
+ * 5 - 01; Write combining (WC)
+
+The GDT and page tables will both be located in memory marked in the memory map as bootloader
+reclaimable (type `0x1000`). See the **Tosaithe Memory Map** section.
+
+### Address Mappings
+
+On entry to the kernel, a virtual-to-physical mapping of memory addresses has been established by
+the bootloader, as follows:
+
+ * Physical memory (as described in the memory map provided) is mapped linearly at address 0 (i.e.
+   identity-mapped), and is also mapped (mirrored) at `0xFFFF_8000_0000_0000`, i.e. the lowest
+   higher-half address in 4-level paging mode.
  * Regardless of the memory map provided, the entire first 4GB will be identity mapped (with
-   mapping mirrored in the top-half); this allows for LAPIC/IOAPIC access for example.
+   mapping mirrored in the top-half). \
+   Note: this allows for LAPIC/IOAPIC access, for example.
  * The kernel is mapped according to its virtual load address, which must be 0xFFFF_FFFF_8000_0000
-   or greater, putting it in the range (-2gb, 0). Note: this allows for efficient code generation
-   using the "kernel" model provided by GCC (`-mcmodel=kernel`) for example, and prevents conflict
-   with other mappings.
+   or greater, putting it in the range [-2gb, 0). \
+   Note: this allows for efficient code generation using the "kernel" model provided by GCC
+   (`-mcmodel=kernel`) for example, and prevents conflict with other mappings.
  * Any mapped memory is mapped using pages of an unspecified (and possibly heterogeneous) size.
- * The kernel is free to modify the bootloader-provided page tables, but there are no guarantees
-   made as to their location or structure. It is recommended that the kernel establish its own
-   page tables as early as possible.
 
+The kernel is free to modify the bootloader-provided page tables, but there are no guarantees made
+as to their exact location or structure. It is recommended that the kernel establish its own page
+tables as early as possible.
 
 ## Loader Data Structure
 
 The kernel entry point is provided with a pointer to an instance of a `tosaithe_loader_data`
-structure, which the bootloader fills to provide system information to the kernel.
+structure (see **Entry To Kernel**), which the bootloader fills to provide information to the
+kernel. The structure contains information about the system (including a memory map), pointers
+to firmware tables, and parameters such as kernel command line and ramdisk location.
 
-It contains the following fields:
+Values are mandatory unless otherwise specified. Optional pointer values will contain null (`0`)
+if not present.
+
+The loader data structure contains three groups of fields: basic information, firmware
+information, and framebuffer information.
+
+### Basic Information
+
+The first group of fields in the loader data structure represent information about the bootloader
+(in the form of a version field), kernel parameters such as command line and ramdisk, and system
+memory map.
+
+The fields are as follows:
 
 - `uint32_t signature` - the loader signature, should be "TSLD" (from first i.e. least-significant
   to last i.e. most-significant byte)
 - `uint32_t version` - the version of the protocol being used by the bootloader.
 - `uint32_t flags` - currently unused.
-- `const char *cmdline` - a pointer to the command line string, a nul-terminated string in UTF-8
-  encoding.
+- `const char *cmdline` - an optional pointer to the command line string, a nul-terminated string
+  in UTF-8 encoding.
 - `tsbp_mmap_entry *memmap` - pointer to the system-provided memory map; see below.
 - `uint32_t memmap_entries` - number of entries in memory map (via `memmap`)
 - `tsbp_kernel_mapping *kern_map` - pointer to kernel segment mapping table. Specifies where each
@@ -174,11 +224,13 @@ It contains the following fields:
 - `void *ramdisk` - pointer to a ramdisk image that was loaded by the bootloader, or null if none.
   If present the ramdisk image will be page-aligned.
 - `uint64_t ramdisk_size` - size of the ramdisk image that was loaded by the bootloader, or zero
-  if none.
+  if none. \
+  Note: this size is _not_ rounded up to a multiple of page size.
 
 ### Firmware Information
 
-The following fields provide firmware such as pointers to firmware-provided tables:
+The firmware information fields in the loader data structure provide pointers to firmware tables
+and entry points. The following fields are present:
 
 - `void *acpi_rdsp` - pointer to the ACPI RDSP, if it can be determined by the bootloader.
 - `void *smbios3_entry` - pointer to SMBIOS 3+ "entry" table, if it can be determined by the
@@ -192,8 +244,13 @@ The following fields provide firmware such as pointers to firmware-provided tabl
 
 ### Framebuffer
 
-The following fields provide information about a framebuffer established by the firmware or
-bootloader. Fields are set to 0 if there is no framebuffer available.
+The following fields in the loader data structure provide information about a framebuffer
+established by the firmware or bootloader. Fields are set to 0 if there is no framebuffer
+available.
+
+Note: the framebuffer format, described in the next paragraph, is typical for framebuffers in
+other contexts, and readers may already be familiar with it. The description is provided for
+completeness.
 
 If provided, the framebuffer allows access to individual pixels on the display. Each pixel
 is represented by a value, stored in one or more bytes, which can be broken into three components:
@@ -208,7 +265,7 @@ bits per colour channel (R/G/B). A 32bpp arrangement is normally preferred.
 
 The following fields provide framebuffer information:
 
-- `uintptr_t framebuffer_addr` - physical address of the framebuffer.
+- `void * framebuffer_addr` - physical address of the framebuffer.
 - `uintptr_t framebuffer_size` - size in bytes of the framebuffer, rounded up to the nearest 4kb.
 - `uint16_t framebuffer_width` - width in pixels.
 - `uint16_t framebuffer_height` - height in pixels.
@@ -223,12 +280,14 @@ The following fields provide framebuffer information:
 - `uint8_t blue_mask_size` - the number of bits used to represent the blue component
 - `uint8_t blue_mask_shift` - the position of the blue component within the pixel value
 
+
 ## Tosaithe Memory Map
 
-The memory map provided via the loader data is a map of physical memory, comprising entries of
-type `tsbp_mmap_entry`, ordered from low to high address. The map indicates available memory,
-reclaimable memory (which holds information useful to the kernel, but which may be used by the
-kernel once it has processed the information), and reserved address ranges.
+The memory map provided (via the `memmap` field of the loader data) by the loader data is a map of
+physical memory, comprising entries of type `tsbp_mmap_entry`, representing non-overlapping ranges
+of memory ordered from lowest to highest address. The map indicates available memory, reclaimable
+memory (which holds information useful to the kernel, but which may be used by the kernel once it
+has processed the information), and reserved address ranges.
 
 Note that the memory map does not include address ranges currently used by CPU-specific devices
 such as Local APIC and IOAPIC, or MMIO ranges for PCI devices or other devices that the firmware
@@ -236,41 +295,61 @@ expects the OS to enumerate.
 
 The `tsbp_mmap_entry` type comprises the following fields:
 
-- `uintptr_t base` - the physical base address of the memory region (page-aligned).
-- `uintptr_t length` - the length of the memory region.
-- `tsbp_mmap_type type` - the type of the region.
+- `uintptr_t base` - the physical base address of the memory region (4kb-page-aligned).
+- `uintptr_t length` - the length of the memory region (multiple of 4kb).
+- `tsbp_mmap_type type` - the type of the region (described below).
 - `uint32_t flags` - flags for the region.
 
-The `tbsp_mmap_type` field takes one of the following values:
+The `tbsp_mmap_type` field 32 bits in size, and takes one of the following values:
 
-- `tbsp_mmap_type::USABLE` - the memory is available for use by the OS kernel.
-- `tbsp_mmap_type::RESERVED` - the address range is reserved; any memory in the range should not
-  be accessed by the OS. No device should have its MMIO space mapped to the address by the OS.
-- `tbsp_mmap_type::ACPI_RECLAIMABLE` - the memory contains ACPI tables, and is usable by the OS
-  once it no longer needs the tables.
-- `tbsp_mmap_type::ACPI_NVS` - the memory is used by ACPI firmware and the OS should not use the
-  memory or map MMIO into the address range.
-- `tbsp_mmap_type::UEFI_RUNTIME_CODE`, `tbsp_mmap_type::UEFI_RUNTIME_DATA` - the memory contains
-  UEFI firmware code or data; it can be used by the OS if it will not use UEFI runtime services.
+- `tbsp_mmap_type::USABLE` (0) - the memory is available for use by the OS kernel.
+- `tbsp_mmap_type::RESERVED` (1) - the address range is reserved; any memory in the range should
+  not be accessed by the OS. No device should have its MMIO space mapped to the address by the OS.
+- `tbsp_mmap_type::ACPI_RECLAIMABLE` (2) - the memory contains ACPI tables, and is usable by the
+  OS once it no longer needs the tables.
+- `tbsp_mmap_type::ACPI_NVS` (3) - the memory is used by ACPI firmware and the OS should not use
+  the memory or map MMIO into the address range.
+- `tbsp_mmap_type::UEFI_RUNTIME_CODE` (4), `tbsp_mmap_type::UEFI_RUNTIME_DATA` (5) - the memory
+  contains UEFI firmware code or data; it can be used by the OS if it will not use UEFI runtime
+  services. \
   Note: if the OS will use UEFI runtime services with an alternative address map established via
   the `SetVirtualAddressMap()` UEFI runtime service function, it must provide a mapping for this
   memory region as part of that call.
-- `tbsp_mmap_type::BAD_MEMORY` - the memory in this region is known to be faulty, and should not
-  be used.
-- `tbsp_mmap_type::PERSISTENT_MEMORY` - the memory in this range is persistent (the contents
+- `tbsp_mmap_type::BAD_MEMORY` (6) - the memory in this region is known to be faulty, and should
+  not be used.
+- `tbsp_mmap_type::PERSISTENT_MEMORY` (7) - the memory in this range is persistent (the contents
   should survive system reboots and downtime). The precise nature of the range is dependent upon
   the system. In general, the OS should not make use of this memory unless it has particular
   knowledge of the underlying system or if requested by the user to do so.
-- `tbsp_mmap_type::BOOTLOADER_RECLAIMABLE` - the memory contains information passed from the
-  bootloader to the OS kernel. This includes the loader data structure, memory maps, command line,
-  and any other data or tables provided by the bootloader (as opposed to the firmware). The kernel
-  may use this memory once it no longer needs the information provided by the bootloader.
-- `tbsp_mmap_type::KERNEL` - the memory contains the loaded kernel. Note: the kernel is also
-  mapped at a virtual address, as described by the `kern_map` table via the loader entry data.
-- `tbsp_mmap_type::RAMDISK` - the memory contains a ramdisk image, passed to the kernel via the
-  `ramdisk` pointer.
-- `tbsp_mmap_type::FRAMEBUFFER` - the memory contains a graphics framebuffer, passed to the kernel
-  via the `framebuffer_addr` pointer.
+- `tbsp_mmap_type::BOOTLOADER_RECLAIMABLE` (0x1000) - the memory contains information passed from
+  the bootloader to the OS kernel. This includes the loader data structure, memory maps, command
+  line, and any other data or tables provided by the bootloader (as opposed to the firmware). The
+  kernel may use this memory once it no longer needs the information provided by the bootloader.
+- `tbsp_mmap_type::KERNEL` (0x1001) - the memory contains the loaded kernel. Note: the kernel is
+  also mapped at a virtual address, as described by the `kern_map` table via the loader entry
+  data.
+- `tbsp_mmap_type::RAMDISK` (0x1002) - the memory contains a ramdisk image, passed to the kernel
+  via the `ramdisk` pointer.
+- `tbsp_mmap_type::FRAMEBUFFER` (0x1003) - the memory contains a graphics framebuffer, passed to
+  the kernel via the `framebuffer_addr` pointer.
+
+The flags field may contain the following values (combined via bitwise-OR):
+
+- One of the following caching types (see Intel processor Software Developer's Manual): 
+  - `tsbp_mmap_flags::CACHE_WB` (0) - fully cached ("writeback")
+  - `tsbp_mmap_flags::CACHE_WT` (1) - write-through
+  - `tsbp_mmap_flags::CACHE_UC` (2) - uncacheable
+  - `tsbp_mmap_flags::CACHE_WP` (4) - write-protect
+  - `tsbp_mmap_flags::CACHE_WC` (5) - write-combining
+- `tsbp_mmap_flags::UEFI_RUNTIME` (0x10) - indicates that the memory region requires a mapping for
+  UEFI runtime services (a mapping for the memory region must be included in any memory map passed
+  to the `SetVirtualMap` UEFI runtime services function).
+
+Note: the `tsbp_mmap_flags::CACHE_XX` value for a particular caching type (XX) correspond to the
+index of the PAT entry that has been initialised with the corresponding type.
+
+The `tsbp_mmap_flags::CACHE_MASK` value can be used as a bitmask to extract the cache type from a
+flags value.
 
 ## Kernel Mappings
 
