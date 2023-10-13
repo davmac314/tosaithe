@@ -1599,6 +1599,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                     "movl $0, %%eax\n"
                     "movl %%eax, %%ds\n"
                     "pushq $0x0\n"  // invalid return address
+                    "cld\n"         // ensure DF is clear
                     "jmpq %A2"
 
                 :
