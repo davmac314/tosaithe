@@ -1552,9 +1552,27 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             "movl $0x277, %%ecx\n"  // IA32_PAT
             "wrmsr\n"
 
-            // put our own page tables in place:
-            "movq %0, %%rax\n"
-            "movq %%rax, %%cr3\n"
+            // After modifying the PAT a lot of TLB/cache flushing is required according to the
+            // Intel processor manuals. The only part of this that we otherwise need is to reload
+            // CR3 (page directory base). We're not expecting to have changed the cache type of
+            // any memory range, but to be safe we'll follow the other recommendations:
+
+            // Enter cache no-fill mode: Set CD to 1 and NW to 0 in CR0:
+            "movq %%cr0, %%rax\n"
+            "orl $(1 << 30), %%eax\n"  // CD=1
+            "andl $(0xffffffff - (1 << 29)), %%eax\n"  // NW=0
+            "movq %%rax, %%cr0\n"
+
+            // Flush cache
+            "wbinvd\n"
+
+            // Put our own page tables in place:
+            "movq %0, %%rdx\n"
+            "movq %%rdx, %%cr3\n"
+
+            // Restore normal cache operation (CD=0; NW is already 0):
+            "andl $(0xffffffff - (1 << 30)), %%eax\n"
+            "movq %%rax, %%cr0\n"
 
             :
             : "rm"(page_tables)
