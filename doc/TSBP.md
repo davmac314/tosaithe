@@ -169,6 +169,13 @@ The Page Attribute Table (PAT) is set up (via the `IA32_PAT` MSR) with the follo
 The GDT and page tables will both be located in memory marked in the memory map as bootloader
 reclaimable (type `0x1000`). See the **Tosaithe Memory Map** section.
 
+The interrupt controllers remain in the state established by firmware.
+
+Note: according to ACPI, this allows for an OS to use the legacy PIC if so desired (and if it is
+present), with no action required to disable or mask interrupts in other interrupt controllers. If
+the OS will use the IOAPIC, it should follow the guidelines in the ACPI specification, which
+include use of the ACPI `\_PIC` method and masking all interrupts on the legacy PIC.
+
 ### Address Mappings
 
 On entry to the kernel, a virtual-to-physical mapping of memory addresses has been established by
@@ -323,8 +330,9 @@ The `tbsp_mmap_type` field 32 bits in size, and takes one of the following value
   knowledge of the underlying system or if requested by the user to do so.
 - `tbsp_mmap_type::BOOTLOADER_RECLAIMABLE` (0x1000) - the memory contains information passed from
   the bootloader to the OS kernel. This includes the loader data structure, memory maps, command
-  line, and any other data or tables provided by the bootloader (as opposed to the firmware). The
-  kernel may use this memory once it no longer needs the information provided by the bootloader.
+  line, and any other data or tables provided by the bootloader (as opposed to the firmware), as
+  well as in-memory processor structures such as descriptor tables and page tables. The kernel may
+  use this memory once it no longer needs any of the information or structures within it.
 - `tbsp_mmap_type::KERNEL` (0x1001) - the memory contains the loaded kernel. Note: the kernel is
   also mapped at a virtual address, as described by the `kern_map` table via the loader entry
   data.
