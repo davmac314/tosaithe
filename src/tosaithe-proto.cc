@@ -190,7 +190,6 @@ DT_entry GDT_table[] = {
         // ---- 1 ----
 
         cons_DT_code64_descriptor(),
-        cons_DT_data32_descriptor(),
 };
 
 static const CHAR16 * const OPEN_KERNEL_ERR_FIRMWARE = L"unexpected firmware error";
