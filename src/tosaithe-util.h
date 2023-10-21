@@ -349,6 +349,23 @@ inline unsigned find_devpath_size(const EFI_DEVICE_PATH_PROTOCOL *dp)
     return end + len;
 }
 
+// Advance to next device path instance (or return nullptr)
+inline EFI_DEVICE_PATH_PROTOCOL *find_next_devpath_instance(const EFI_DEVICE_PATH_PROTOCOL *dp)
+{
+    typedef unsigned char byte;
+    unsigned end_offs = find_devpath_end(dp);
+    byte *dp_u8 = (byte *)dp + end_offs;
+
+    uint8_t dpn_subtype = dp_u8[1];
+    if (dpn_subtype != 0x1) {
+        // Not the start of a new instance, therefore end of device path
+        return nullptr;
+    }
+
+    uint16_t dpn_end_node_len = dp_u8[2] + (dp_u8[3] << 8);
+    return (EFI_DEVICE_PATH_PROTOCOL *)(dp_u8 + dpn_end_node_len);
+}
+
 class open_file_exception {
 public:
     enum of_stage {

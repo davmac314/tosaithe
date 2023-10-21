@@ -256,12 +256,58 @@ static void *find_config_table(const EFI_GUID &table_id)
     return nullptr;
 }
 
+static EFI_GRAPHICS_OUTPUT_PROTOCOL *find_GOP()
+{
+    // First try looking up via ConOut handle:
+    {
+        void *gop_proto = nullptr;
+        EFI_STATUS status = EBS->HandleProtocol(&EST->ConsoleOutHandle,
+                &EFI_graphics_output_protocol_guid, &gop_proto);
+        if (status == EFI_SUCCESS) {
+            return (EFI_GRAPHICS_OUTPUT_PROTOCOL *)gop_proto;
+        }
+    }
+
+    UINTN conout_var_size = 0;
+    EFI_STATUS status = EST->RuntimeServices->GetVariable(L"ConOutDev", &EFI_global_variable_guid,
+            nullptr, &conout_var_size, nullptr);
+    if (EFI_ERROR(status) && status != EFI_BUFFER_TOO_SMALL)
+        goto fallback_locate;
+
+    {
+        std::unique_ptr<void> conout_var_val { alloc_pool(conout_var_size) };
+        status = EST->RuntimeServices->GetVariable(L"ConOutDev", &EFI_global_variable_guid, nullptr,
+                &conout_var_size, conout_var_val.get());
+        if (EFI_ERROR(status))
+            goto fallback_locate;
+
+        EFI_HANDLE gop_hndl = nullptr;
+        EFI_DEVICE_PATH_PROTOCOL *con_out_devpath = (EFI_DEVICE_PATH_PROTOCOL *)conout_var_val.get();
+
+        while (true) {
+            status = EBS->LocateDevicePath(&EFI_graphics_output_protocol_guid, &con_out_devpath, &gop_hndl);
+            if (status == EFI_SUCCESS) {
+                void *gop_proto = nullptr;
+                EBS->HandleProtocol(gop_hndl, &EFI_graphics_output_protocol_guid, &gop_proto);
+                // (^^ Shouldn't fail, but if it does, we'll return null anyway)
+                return (EFI_GRAPHICS_OUTPUT_PROTOCOL *)gop_proto;
+            }
+
+            con_out_devpath = find_next_devpath_instance(con_out_devpath);
+        }
+    }
+
+    fallback_locate:
+
+    // fall back to locate_protocol:
+    return (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locate_protocol(EFI_graphics_output_protocol_guid);;
+}
+
 // Check whether a usable framebuffer exists, copy relevant info into 'fbinfo' if so
 // and store the framebuffer size (rounded up to page boundary) into '*fb_size'.
 static void check_framebuffer(tosaithe_loader_data *fbinfo)
 {
-    EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics =
-            (EFI_GRAPHICS_OUTPUT_PROTOCOL *) locate_protocol(EFI_graphics_output_protocol_guid);
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *graphics = find_GOP();
 
     fbinfo->framebuffer_addr = 0;
     fbinfo->framebuffer_size = 0;
