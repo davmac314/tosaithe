@@ -8,10 +8,10 @@ CXXFLAGS ?= "error: must set CXXFLAGS"
 all: tosaithe.efi
 
 # We have to link twice: the first time as ELF, to produce the .eh_frame_hdr section (--eh-frame-hdr).
-# The second time to convert to PEI.
-tosaithe.efi: main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o
+# The second time to convert to PEI (EFI executable format).
+tosaithe.efi: main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o config.o
 	ld -q -nostdlib -Bsymbolic -T link-elf.lds \
-	  main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o \
+	  main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o config.o \
 	  --eh-frame-hdr \
 	  -L ../lib -lunwind -lcxxabi -lbmcxx \
 	  -Map=tosaithe.efi.so.map -o tosaithe.efi.so
@@ -44,6 +44,9 @@ tosaithe-util.o: tosaithe-util.cc
 
 cxxsupport.o: cxxsupport.cc
 	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c cxxsupport.cc
+
+config.o: config.cc
+	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c config.cc
 
 # Everything below here is concerned with building disk images and running in QEMU
 
