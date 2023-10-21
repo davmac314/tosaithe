@@ -227,9 +227,27 @@ typedef struct {
     // XXX not complete
 } EFI_BOOT_SERVICES;
 
+// Identifies an EFI system-defined variable
+#define EFI_GLOBAL_VARIABLE {0x8BE4DF61,0x93CA,0x11d2, {0xAA,0x0D,0x00,0xE0,0x98,0x03,0x2B,0x8C}}
+static const EFI_GUID EFI_global_variable_guid = EFI_GLOBAL_VARIABLE;
+
+// Variable attributes
+#define EFI_VARIABLE_NON_VOLATILE 0x1
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS 0x2
+#define EFI_VARIABLE_RUNTIME_ACCESS 0x4
+#define EFI_VARIABLE_HARDWARE_ERROR_RECORD 0x8
+#define EFI_VARIABLE_AUTHENTICATED_WRITE_ACCESS 0x10 /* deprecated */
+#define EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS 0x20
+#define EFI_VARIABLE_APPEND_WRITE 0x40
+#define EFI_VARIABLE_ENHANCED_AUTHENTICATED_ACCESS 0x80
+
+// Runtime service functions
+typedef EFI_STATUS (EFIAPI *EFI_GET_VARIABLE)(IN const CHAR16 *VariableName, IN const EFI_GUID *VendorGUID,
+        OUT uint32_t *Attributes OPTIONAL, IN OUT UINTN *DataSize, OUT void *Data OPTIONAL);
+
 // Runtime services table
 typedef struct { // EFI_RUNTIME_SERVICES
-    EFI_TABLE_HEADER                 Hdr;
+    EFI_TABLE_HEADER Hdr;
     // XXX not complete
 
     void *GetTime;
@@ -240,7 +258,7 @@ typedef struct { // EFI_RUNTIME_SERVICES
     void *SetVirtualAddressMap;
     void *ConvertPointer;
 
-    void *GetVariable;
+    EFI_GET_VARIABLE GetVariable;
     void *GetNextVariableName;
     void *SetVariable;
 
