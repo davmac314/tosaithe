@@ -398,7 +398,7 @@ static void check_framebuffer(tosaithe_loader_data *fbinfo)
     fbinfo->framebuffer_height = graphics->Mode->Info->VerticalResolution;
     fbinfo->framebuffer_pitch = graphics->Mode->Info->PixelsPerScanLine
             * ((fbinfo->framebuffer_bpp + 7) / 8u);
-    fbinfo->framebuffer_size = (((uint64_t)graphics->Mode->FrameBufferSize) + 0xFFFu) / 0x1000u * 0x1000u;
+    fbinfo->framebuffer_size = round_up_to_p2((uint64_t)graphics->Mode->FrameBufferSize, (uint64_t)4096);
 }
 
 // Get a copy of the EFI memory map in an allocated buffer. Returns null on general failure or
