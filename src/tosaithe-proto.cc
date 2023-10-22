@@ -1416,17 +1416,21 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
         uint64_t number_of_pages = efi_mem_iter->NumberOfPages;
         EFI_PHYSICAL_ADDRESS physical_start = efi_mem_iter->PhysicalStart;
+        EFI_PHYSICAL_ADDRESS physical_end = physical_start + number_of_pages * 0x1000u;
 
         // Merge BOOTLOADER_RECLAIMABLE sections
         if (st_type == tsbp_mmap_type::BOOTLOADER_RECLAIMABLE) {
             auto efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
             while (efi_mem_next < efi_mem_end) {
+                if (efi_mem_next->PhysicalStart != physical_end)
+                    break;
                 if (efi_mem_next->Type != EfiLoaderData)
                     break;
                 if (efi_mem_next->Attribute != efi_mem_iter->Attribute)
                     break;
                 efi_mem_iter = efi_mem_next;
                 number_of_pages += efi_mem_iter->NumberOfPages;
+                physical_end += efi_mem_iter->NumberOfPages * 0x1000u;
                 efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
             }
         }
@@ -1434,6 +1438,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         else if (st_type == tsbp_mmap_type::RESERVED) {
             auto efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
             while (efi_mem_next < efi_mem_end) {
+                if (efi_mem_next->PhysicalStart != physical_end)
+                    break;
                 if (efi_mem_next->Type != EfiMemoryMappedIO && efi_mem_next->Type != EfiMemoryMappedIOPortSpace
                         && efi_mem_next->Type != EfiPalCode)
                     break;
@@ -1441,6 +1447,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                     break;
                 efi_mem_iter = efi_mem_next;
                 number_of_pages += efi_mem_iter->NumberOfPages;
+                physical_end += efi_mem_iter->NumberOfPages * 0x1000u;
                 efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
             }
         }
@@ -1448,6 +1455,8 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         else if (st_type == tsbp_mmap_type::USABLE) {
             auto efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
             while (efi_mem_next < efi_mem_end) {
+                if (efi_mem_next->PhysicalStart != physical_end)
+                    break;
                 if (efi_mem_next->Type != EfiLoaderCode && efi_mem_next->Type != EfiConventionalMemory
                         && efi_mem_next->Type != EfiBootServicesCode && efi_mem_next->Type != EfiBootServicesData)
                     break;
@@ -1455,6 +1464,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                     break;
                 efi_mem_iter = efi_mem_next;
                 number_of_pages += efi_mem_iter->NumberOfPages;
+                physical_end += efi_mem_iter->NumberOfPages * 0x1000u;
                 efi_mem_next = (EFI_MEMORY_DESCRIPTOR *)((char *)efi_mem_iter + memMapDescrSize);
             }
         }
