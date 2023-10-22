@@ -1,7 +1,20 @@
-# name {  -- begins object
-# name: -- begins value, may be {...} (object), [...] (list), "value" (string)
-# name:  
+# Syntax:
 #
+# There are two types of value: objects, and strings.
+#
+# Objects are declared as:
+#
+#     type: {
+#       (field values)
+#     }
+#
+# String settings are written as:
+#
+#     name = 'value'  
+#
+# The quotes can be elided if the value is valid as an identifier name.
+
+preferred_resolution = '1024x768'
 
 entry: {
     description = 'Linux - with root on /dev/nvme0n1p2'

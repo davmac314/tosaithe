@@ -291,7 +291,7 @@ EfiMain (
         return EFI_LOAD_ERROR;
     }
 
-    std::vector<menu_entry> menu;
+    ts_config config;
 
     efi_unique_ptr<char> conf_buf;
     UINTN conf_size;
@@ -326,7 +326,7 @@ EfiMain (
     conf_path.reset();
 
     try {
-        menu = parse_config(conf_buf.get(), conf_size);
+        config = parse_config(conf_buf.get(), conf_size);
     }
     catch (parse_exception &pe) {
         utf8toUCS2 uu;
@@ -341,6 +341,32 @@ EfiMain (
 
     conf_buf.reset();
 
+    // Set preferred mode via GOP, if available
+    if (config.pref_gop_width != 0 && config.pref_gop_height != 0) {
+        EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = find_GOP();
+        if (gop != nullptr) {
+            uint32_t max_mode = gop->Mode->MaxMode;
+            uint32_t current_mode = gop->Mode->Mode;
+
+            UINTN info_size;
+            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *mode_info;
+
+            uint32_t chosen_mode = (uint32_t)-1;
+            for (unsigned i = 0; i <= max_mode; i++) {
+                gop->QueryMode(gop, i, &info_size, &mode_info);
+                if (mode_info->HorizontalResolution == config.pref_gop_width
+                        && mode_info->VerticalResolution == config.pref_gop_height) {
+                    chosen_mode = i;
+                    break;
+                }
+            }
+
+            if (chosen_mode != (uint32_t)-1 && chosen_mode != current_mode) {
+                gop->SetMode(gop, chosen_mode);
+            }
+        }
+    }
+
     unsigned entry_offs = 0;
 
     display_menu:
@@ -348,6 +374,8 @@ EfiMain (
     EFI_con_out->SetAttribute(EFI_con_out, EFI_YELLOW);
     con_write(L"Please make a selection:\r\n\r\n");
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTCYAN);
+
+    std::vector<menu_entry> &menu = config.entries;
 
     for (unsigned i = 0; i < 10; ++i) {
         if (i + entry_offs >= menu.size())

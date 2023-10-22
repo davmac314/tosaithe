@@ -29,6 +29,9 @@ inline void free_pool(void *buf)
     EBS->FreePool(buf);
 }
 
+// Find (or at least guess) the best GOP interface to use
+EFI_GRAPHICS_OUTPUT_PROTOCOL *find_GOP();
+
 // Locate a protocol by finding a singular handle supporting it
 inline void *locate_protocol(const EFI_GUID &guid)
 {

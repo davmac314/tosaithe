@@ -17,6 +17,12 @@ struct menu_entry {
     menu_entry() { }
 };
 
+struct ts_config {
+    uint16_t pref_gop_width = 0;
+    uint16_t pref_gop_height = 0;
+    std::vector<menu_entry> entries;
+};
+
 class parse_exception : public std::exception
 {
     const char *what_msg;
@@ -25,4 +31,4 @@ public:
     const char *what() const noexcept override { return what_msg; }
 };
 
-std::vector<menu_entry> parse_config(char *conf_buf, uint64_t buf_size);
+ts_config parse_config(char *conf_buf, uint64_t buf_size);

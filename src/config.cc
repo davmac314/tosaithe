@@ -1,3 +1,4 @@
+#include <charconv>
 #include <vector>
 #include <string>
 
@@ -10,12 +11,12 @@ static const char * const msg_colon_after_entry = "expecting ':' after 'entry'";
 static const char * const msg_lbrace_after_entry = "expecting '{' after 'entry:'";
 static const char * const msg_rbrace_after_entry = "expecting '}' at end of entry";
 static const char * const msg_equals_after_var = "expecting '=' after identifier in entry setting";
-static const char * const msg_value_after_equals = "expecting value after '=' in entry setting";
+static const char * const msg_value_after_equals = "expecting value after '=' in setting";
 static const char * const msg_quote_end_string = "expecting ' (quote) at end of string value";
 static const char * const msg_unrecognized_value = "unrecognized setting value";
 static const char * const msg_unrecognized_entry_type = "unrecognized entry type";
 static const char * const msg_unrecognized_setting = "unrecognized setting";
-
+static const char * const msg_invalid_value = "invalid value";
 
 static void skip_ws(std::string_view &sv)
 {
@@ -136,11 +137,13 @@ static menu_entry parse_entry(std::string_view &conf)
     return entry;
 }
 
-std::vector<menu_entry> parse_config(char *conf_buf, uint64_t buf_size)
+ts_config parse_config(char *conf_buf, uint64_t buf_size)
 {
-    std::vector<menu_entry> result;
+    ts_config config;
+    std::vector<menu_entry> &entries = config.entries;
     std::string_view conf {conf_buf, buf_size};
     std::string_view sv_entry = "entry";
+    std::string_view sv_preferred_res = "preferred_resolution";
 
     skip_ws(conf);
 
@@ -156,9 +159,29 @@ std::vector<menu_entry> parse_config(char *conf_buf, uint64_t buf_size)
                 conf.remove_prefix(1); skip_ws(conf);
                 if (conf.empty() || conf[0] != '{') throw parse_exception {msg_lbrace_after_entry};
                 conf.remove_prefix(1); skip_ws(conf);
-                result.push_back(parse_entry(conf));
+                entries.push_back(parse_entry(conf));
                 if (conf.empty() || conf[0] != '}') throw parse_exception {msg_rbrace_after_entry};
                 conf.remove_prefix(1);
+            }
+            else if (ident == sv_preferred_res) {
+                std::string res_v = read_assignment_value(conf);
+                char *first = &res_v[0];
+                char *last = first + res_v.length();
+                unsigned width, height;
+                auto [ptr_w, ec_w] = std::from_chars(first, last, width);
+                if (ec_w != std::errc{} || width == 0) {
+                    throw parse_exception {msg_invalid_value};
+                }
+                if (ptr_w == last || (*ptr_w != 'x' && *ptr_w != '*')) {
+                    throw parse_exception {msg_invalid_value};
+                }
+                ptr_w++;
+                auto [ptr_h, ec_h] = std::from_chars(ptr_w, last, height);
+                if (ec_h != std::errc{} || ptr_h != last || height == 0) {
+                    throw parse_exception {msg_invalid_value};
+                }
+                config.pref_gop_width = width;
+                config.pref_gop_height = height;
             }
             else {
                 throw parse_exception {msg_unrecognized_setting};
@@ -168,5 +191,5 @@ std::vector<menu_entry> parse_config(char *conf_buf, uint64_t buf_size)
         skip_ws(conf);
     }
 
-    return result;
+    return config;
 }
