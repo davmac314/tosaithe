@@ -101,5 +101,5 @@ run-disk-img-qemu: disk.img
 	  -debugcon file:ovmf-debug.log -global isa-debugcon.iobase=0x402
 	
 clean:
-	rm -f main.o tosaithe-proto.o tosaithe.efi.so tosaithe.efi disk.img
+	rm -f main.o tosaithe-proto.o tosaithe-util.o config.o tosaithe.efi.so tosaithe.efi disk.img
 	rm -rf image
