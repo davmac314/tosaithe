@@ -23,10 +23,10 @@ tosaithe.efi: main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o config.o
 	  --enable-reloc-section
 
 # Alternative linking method: works with lld (ld.lld), but requires elf2efi
-#tosaithe.efi: main.o tosaithe-proto.o cxxsupport.o
+#tosaithe.efi: main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o config.o
 #	ld -Map tosaithe.efi.so.map -q -Bsymbolic -Bsymbolic-functions -T link-elf.lds \
 #	  -o tosaithe.efi.so \
-#	  main.o tosaithe-proto.o cxxsupport.o \
+#	  main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o config.o \
 #	  --eh-frame-hdr \
 #	  -L ../lib -lunwind -lcxxabi -lbmcxx \
 #	  -Map=tosaithe.efi.so.map -o tosaithe.efi.so
