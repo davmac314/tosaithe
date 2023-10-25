@@ -571,3 +571,14 @@ EfiMain (
 
     goto prompt_for_key;
 }
+
+extern "C"
+EFI_STATUS
+/* EFIAPI */
+efi_main (
+        IN EFI_HANDLE        ImageHandle,
+        IN EFI_SYSTEM_TABLE  *SystemTable
+        )
+{
+    return EfiMain(ImageHandle, SystemTable);
+}

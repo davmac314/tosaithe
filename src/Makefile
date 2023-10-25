@@ -33,6 +33,18 @@ tosaithe.efi: main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o config.o
 #	strip --strip-debug -o tosaithe-stripped.efi.so tosaithe.efi.so
 #	$(ELF2EFI64) --subsystem=10 tosaithe-stripped.efi.so tosaithe.efi
 
+#tosaithe.efi: main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o config.o
+#	ld -m elf_x86_64 --strip-all -nostdlib -static \
+#	  --no-dynamic-linker -z text -z max-page-size=0x1000 -pie \
+#	  --eh-frame-hdr \
+#	  -T link-limine-elf.lds \
+#	  $(LIMINE_EFI)/gnuefi/crt0-efi-x86_64.S.o \
+#	  $(LIMINE_EFI)/gnuefi/reloc_x86_64.c.o \
+#	  main.o tosaithe-proto.o tosaithe-util.o cxxsupport.o config.o \
+#	  -L ../lib -lunwind -lcxxabi -lbmcxx \
+#	  -Map=tosaithe.efi.so.map -o tosaithe.efi.elf
+#	objcopy -O binary tosaithe.efi.elf tosaithe.efi
+
 main.o: main.cc
 	$(CXX) $(CXXPPFLAGS) $(EFICFLAGS) $(CXXFLAGS) -c main.cc
 
