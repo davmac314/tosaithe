@@ -1,5 +1,0 @@
-*.d
-*.map
-OVMF_CODE-*
-OVMF_VARS-*
-kernel.elf

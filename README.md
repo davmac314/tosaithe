@@ -30,7 +30,8 @@ together provide a C++ runtime and standard library.
 
 There is a [specification document](doc/TSBP.md) for the protocol in this repository.
 
-A "Bare Bones" [example](barebones/) is also included.
+A "Bare Bones" [example](https://github.com/davmac314/tosaithe-bb/) is also available in a
+separate repository.
 
 Key features:
 
