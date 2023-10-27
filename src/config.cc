@@ -144,6 +144,7 @@ ts_config parse_config(char *conf_buf, uint64_t buf_size)
     std::string_view conf {conf_buf, buf_size};
     std::string_view sv_entry = "entry";
     std::string_view sv_preferred_res = "preferred_resolution";
+    std::string_view sv_clearscreen = "clear_screen";
 
     skip_ws(conf);
 
@@ -182,6 +183,18 @@ ts_config parse_config(char *conf_buf, uint64_t buf_size)
                 }
                 config.pref_gop_width = width;
                 config.pref_gop_height = height;
+            }
+            else if (ident == sv_clearscreen) {
+                std::string res_v = read_assignment_value(conf);
+                if (res_v == "true") {
+                    config.clear_screen = true;
+                }
+                else if (res_v == "false") {
+                    config.clear_screen = false;
+                }
+                else {
+                    throw parse_exception {msg_invalid_value};
+                }
             }
             else {
                 throw parse_exception {msg_unrecognized_setting};

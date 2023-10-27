@@ -20,6 +20,7 @@ struct menu_entry {
 struct ts_config {
     uint16_t pref_gop_width = 0;
     uint16_t pref_gop_height = 0;
+    bool clear_screen = true;
     std::vector<menu_entry> entries;
 };
 

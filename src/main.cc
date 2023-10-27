@@ -311,6 +311,8 @@ EfiMain (
 
     conf_buf.reset();
 
+    bool did_set_mode = false;
+
     // Set preferred mode via GOP, if available
     if (config.pref_gop_width != 0 && config.pref_gop_height != 0) {
         EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = find_GOP();
@@ -333,11 +335,18 @@ EfiMain (
 
             if (chosen_mode != (uint32_t)-1 && chosen_mode != current_mode) {
                 gop->SetMode(gop, chosen_mode);
+                did_set_mode = true;
             }
         }
     }
 
-    EFI_con_out->ClearScreen(EFI_con_out);
+    if (config.clear_screen && !did_set_mode) {
+        // Note: clearing screen can apparently also set the mode (to a not-desired default) with some
+        // firmware (happens with ASRock B550PG Riptide "BIOS" v3.20 at least). We don't clear the
+        // screen if we set the mode because (a) it's cleared as part of mode switch anyway and (b)
+        // clearing the screen might switch the mode back...
+        EFI_con_out->ClearScreen(EFI_con_out);
+    }
 
     EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
     con_write(L"Tosaithe");

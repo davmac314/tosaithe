@@ -14,13 +14,16 @@
 #
 # The quotes can be elided if the value is valid as an identifier name.
 
-preferred_resolution = '1024x768'
+#preferred_resolution = '1024x768'
+#clear_screen = false
 
 entry: {
     description = 'Linux - with root on /dev/nvme0n1p2'
     type = chain
     exec = '\vmlinuz-5.15.37'
     cmdline = 'linux root=/dev/nvme0n1p2'
+    # Note that initrd can be specified on linux command line
+    # ('initrd=(efi-device-path)')
 }
 
 entry: {
