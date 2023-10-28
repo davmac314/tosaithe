@@ -78,7 +78,7 @@ equivalent definitions for other languages are not as yet provided.
 The protocol recognises kernels in the ELF file format. ELF is a very flexible format, and there
 are some restrictions on some specifics of the structure that must be applied to the kernel.
 The main requirement is that a _Tosaithe Entry Header_ be present (see relevant section below).
-There are some other minor restrictions, many of which may be satisified as a natural outcome
+There are some other minor restrictions, many of which may be satisfied as a natural outcome
 of the usual linking process; they are listed here.
 
  * The kernel must be structured as an ELF file, with no relocations.
