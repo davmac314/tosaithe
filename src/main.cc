@@ -302,7 +302,9 @@ EfiMain (
         utf8toUCS2 uu;
         uu.process(pe.what());
 
-        con_write(L"Error in tosaithe.conf: ");
+        con_write(L"Error in tosaithe.conf:");
+        con_write(pe.get_line_num());
+        con_write(L": ");
         con_write(uu.get_output().c_str());
         con_write(L"\r\n");
 

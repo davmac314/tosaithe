@@ -18,14 +18,15 @@ static const char * const msg_unrecognized_entry_type = "unrecognized entry type
 static const char * const msg_unrecognized_setting = "unrecognized setting";
 static const char * const msg_invalid_value = "invalid value";
 
-static void skip_ws(std::string_view &sv)
+static void skip_ws(std::string_view &sv, int &line_num)
 {
     while (sv.length() > 0 && (sv[0] == ' ' || sv[0] == '\t' || sv[0] == '\r' || sv[0] == '\n')) {
+        if (sv[0] == '\n') line_num++;
         sv.remove_prefix(1);
     }
 }
 
-static void skip_to_next_line(std::string_view &sv)
+static void skip_to_next_line(std::string_view &sv, int &line_num)
 {
     while (!sv.empty() && sv[0] != '\r' && sv[0] != '\n') {
         sv.remove_prefix(1);
@@ -34,6 +35,7 @@ static void skip_to_next_line(std::string_view &sv)
     if (sv.empty()) return;
 
     while (!sv.empty() && (sv[0] == '\r' || sv[0] == '\n')) {
+        if (sv[0] == '\n') line_num++;
         sv.remove_prefix(1);
     }
 }
@@ -55,18 +57,18 @@ static std::string_view read_ident(std::string_view &sv)
     return std::string_view(start, sv.data() - start);
 }
 
-static std::string read_assignment_value(std::string_view &conf)
+static std::string read_assignment_value(std::string_view &conf, int &line_num)
 {
-    skip_ws(conf);
-    if (conf.empty() || conf[0] != '=') throw parse_exception {msg_equals_after_var};
+    skip_ws(conf, line_num);
+    if (conf.empty() || conf[0] != '=') throw parse_exception {line_num, msg_equals_after_var};
     conf.remove_prefix(1);
-    skip_ws(conf);
-    if (conf.empty()) throw parse_exception {msg_value_after_equals};
+    skip_ws(conf, line_num);
+    if (conf.empty()) throw parse_exception {line_num, msg_value_after_equals};
 
     if (is_ident_lead(conf[0])) {
         std::string_view value = read_ident(conf);
         // TODO check for trailing junk (allow trailing comment)
-        skip_to_next_line(conf);
+        skip_to_next_line(conf, line_num);
 
         return std::string(value.data(), value.length());
     }
@@ -79,30 +81,30 @@ static std::string read_assignment_value(std::string_view &conf)
         }
 
         if (conf.empty()) {
-            throw parse_exception {msg_quote_end_string};
+            throw parse_exception {line_num, msg_quote_end_string};
         }
 
         // TODO check for trailing junk (allow trailing comment)
-        skip_to_next_line(conf);
+        skip_to_next_line(conf, line_num);
 
         return result;
     }
 
-    throw parse_exception {msg_unrecognized_value};
+    throw parse_exception {line_num, msg_unrecognized_value};
 }
 
 // parse an entry - everything between braces
-static menu_entry parse_entry(std::string_view &conf)
+static menu_entry parse_entry(std::string_view &conf, int &line_num)
 {
     menu_entry entry;
 
     while (!conf.empty() && conf[0] != '}') {
         if (conf[0] == '#') {
-            skip_to_next_line(conf);
+            skip_to_next_line(conf, line_num);
         }
         else if (is_ident_lead(conf[0])) {
             std::string_view ident = read_ident(conf);
-            std::string value = read_assignment_value(conf);
+            std::string value = read_assignment_value(conf, line_num);
             if (ident == "description") {
                 entry.description = utf8toUCS2::convert(value.c_str());
             }
@@ -117,7 +119,7 @@ static menu_entry parse_entry(std::string_view &conf)
                     entry.entry_type = menu_entry::TOSAITHE;
                 }
                 else {
-                    throw parse_exception {msg_unrecognized_entry_type};
+                    throw parse_exception {line_num, msg_unrecognized_entry_type};
                 }
             }
             else if (ident == "cmdline") {
@@ -131,7 +133,7 @@ static menu_entry parse_entry(std::string_view &conf)
             return entry;
         }
 
-        skip_ws(conf);
+        skip_ws(conf, line_num);
     }
 
     return entry;
@@ -146,46 +148,48 @@ ts_config parse_config(char *conf_buf, uint64_t buf_size)
     std::string_view sv_preferred_res = "preferred_resolution";
     std::string_view sv_clearscreen = "clear_screen";
 
-    skip_ws(conf);
+    int line_num = 1;
+
+    skip_ws(conf, line_num);
 
     while (!conf.empty()) {
         if (conf[0] == '#') {
-            skip_to_next_line(conf);
+            skip_to_next_line(conf, line_num);
         }
         else if (is_ident_lead(conf[0])) {
             std::string_view ident = read_ident(conf);
             if (ident == sv_entry) {
-                skip_ws(conf);
-                if (conf.empty() || conf[0] != ':') throw parse_exception {msg_colon_after_entry};
-                conf.remove_prefix(1); skip_ws(conf);
-                if (conf.empty() || conf[0] != '{') throw parse_exception {msg_lbrace_after_entry};
-                conf.remove_prefix(1); skip_ws(conf);
-                entries.push_back(parse_entry(conf));
-                if (conf.empty() || conf[0] != '}') throw parse_exception {msg_rbrace_after_entry};
+                skip_ws(conf, line_num);
+                if (conf.empty() || conf[0] != ':') throw parse_exception {line_num, msg_colon_after_entry};
+                conf.remove_prefix(1); skip_ws(conf, line_num);
+                if (conf.empty() || conf[0] != '{') throw parse_exception {line_num, msg_lbrace_after_entry};
+                conf.remove_prefix(1); skip_ws(conf, line_num);
+                entries.push_back(parse_entry(conf, line_num));
+                if (conf.empty() || conf[0] != '}') throw parse_exception {line_num, msg_rbrace_after_entry};
                 conf.remove_prefix(1);
             }
             else if (ident == sv_preferred_res) {
-                std::string res_v = read_assignment_value(conf);
+                std::string res_v = read_assignment_value(conf, line_num);
                 char *first = &res_v[0];
                 char *last = first + res_v.length();
                 unsigned width, height;
                 auto [ptr_w, ec_w] = std::from_chars(first, last, width);
                 if (ec_w != std::errc{} || width == 0) {
-                    throw parse_exception {msg_invalid_value};
+                    throw parse_exception {line_num, msg_invalid_value};
                 }
                 if (ptr_w == last || (*ptr_w != 'x' && *ptr_w != '*')) {
-                    throw parse_exception {msg_invalid_value};
+                    throw parse_exception {line_num, msg_invalid_value};
                 }
                 ptr_w++;
                 auto [ptr_h, ec_h] = std::from_chars(ptr_w, last, height);
                 if (ec_h != std::errc{} || ptr_h != last || height == 0) {
-                    throw parse_exception {msg_invalid_value};
+                    throw parse_exception {line_num, msg_invalid_value};
                 }
                 config.pref_gop_width = width;
                 config.pref_gop_height = height;
             }
             else if (ident == sv_clearscreen) {
-                std::string res_v = read_assignment_value(conf);
+                std::string res_v = read_assignment_value(conf, line_num);
                 if (res_v == "true") {
                     config.clear_screen = true;
                 }
@@ -193,15 +197,15 @@ ts_config parse_config(char *conf_buf, uint64_t buf_size)
                     config.clear_screen = false;
                 }
                 else {
-                    throw parse_exception {msg_invalid_value};
+                    throw parse_exception {line_num, msg_invalid_value};
                 }
             }
             else {
-                throw parse_exception {msg_unrecognized_setting};
+                throw parse_exception {line_num, msg_unrecognized_setting};
             }
         }
 
-        skip_ws(conf);
+        skip_ws(conf, line_num);
     }
 
     return config;

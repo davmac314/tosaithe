@@ -26,10 +26,12 @@ struct ts_config {
 
 class parse_exception : public std::exception
 {
+    int line_num;
     const char *what_msg;
 public:
-    parse_exception(const char *msg) noexcept : what_msg(msg) { }
+    parse_exception(int line, const char *msg) noexcept : line_num(line), what_msg(msg) { }
     const char *what() const noexcept override { return what_msg; }
+    int get_line_num() const noexcept { return line_num; }
 };
 
 ts_config parse_config(char *conf_buf, uint64_t buf_size);
