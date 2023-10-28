@@ -166,6 +166,9 @@ typedef EFI_STATUS(EFIAPI *EFI_EXIT)(IN EFI_HANDLE ImageHandle, IN EFI_STATUS Ex
 typedef EFI_STATUS(EFIAPI *EFI_IMAGE_UNLOAD)(IN EFI_HANDLE ImageHandle);
 typedef EFI_STATUS(EFIAPI *EFI_EXIT_BOOT_SERVICES)(IN EFI_HANDLE ImageHandle, IN UINTN MapKey);
 
+typedef EFI_STATUS(EFIAPI *EFI_SET_WATCHDOG_TIMER)(IN UINTN Timeout, IN uint64_t WatchdogCode,
+        IN UINTN Dataize, IN CHAR16 *WatchdogData OPTIONAL);
+
 typedef EFI_STATUS(EFIAPI *EFI_LOCATE_PROTOCOL)(const IN EFI_GUID *Protocol,
         IN void *Registration OPTIONAL, OUT void **Interface);
 
@@ -211,7 +214,7 @@ typedef struct {
 
     void *GetNextMonotonicCount;
     void *Stall;
-    void *SetWatchdogTimer;
+    EFI_SET_WATCHDOG_TIMER           SetWatchdogTimer;
 
     void *ConnectController;
     void *DisconnectController;

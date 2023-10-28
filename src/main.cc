@@ -313,6 +313,9 @@ EfiMain (
 
     conf_buf.reset();
 
+    // Disable firmware's watchdog timer.
+    EBS->SetWatchdogTimer(0, 0, 0, nullptr);
+
     bool did_set_mode = false;
 
     // Set preferred mode via GOP, if available
