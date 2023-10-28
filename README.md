@@ -7,14 +7,12 @@ and loaders, including Linux kernels, and has basic support for a bespoke boot p
 kernel image format (the "Tosaithe boot protocol" or "TSBP"). It is currently x86-64 only.
 
 This is free software, with as few restrictions as legally possible. It comes with no warranty
-and will not be supported by the original author. Use it at your own risk.
+and no guarantee of support from the author. Use it at your own risk.
 
-I began writing Tosaithe when I was experimenting with writing a "toy" OS kernel. Not being
-satisfied with other alternatives, for various reasons, I decided (in the true spirit of OS
-development) to write one myself. Other bootloaders available at the time did not fit my
-requirements. 
+## Introduction
 
-Tosaithe mainly serves now as the reference implementation for the Tosaithe Boot Protocol (TSBP).
+Tosaithe is a very simple, but fully functional, bootloader/menu for systems with a UEFI firmware.
+It mainly serves as the reference implementation for the Tosaithe Boot Protocol (TSBP).
 
 It is also:
 
@@ -25,6 +23,8 @@ It is also:
 
 It also serves as an example client of the bmcxxabi, bmunwind, and libbmcxx libraries which
 together provide a C++ runtime and standard library.
+
+![A screenshot of Tosaithe displaying a boot menu](/screenshot/tosaithe-screenshot.png?raw=true "Tosaithe in action")
 
 ## The Tosaithe boot protocol (TSBP)
 
@@ -40,12 +40,14 @@ Key features:
 * Memory map, firmware information, and framebuffer details are passed to the kernel
 * Supports passing kernel command line and initial ramdisk image
 
+See the specification document for details.
+
 ## Building Tosaithe
 
-Requires GCC and Binutils (builds with Clang, but requires GNU Binutilfs "BFD" linker). I have
-built with GCC 11.4.0 and Binutils 2.39. I recommend not trying to use older Binutils as there
-have been bugs with the PE+ output format support. Binutils must have been built with appropriate
-support (this is usually the case with distro-provided Binutils, use
+Building requires GCC and Binutils (builds with Clang, but requires GNU Binutilfs "BFD" linker). I
+have built with GCC 11.4.0 and Binutils 2.39. I recommend not trying to use older Binutils as
+there have been bugs with the PE+ output format support. Binutils must have been built with
+appropriate support (this is usually the case with distro-provided Binutils, use
 `--enable-targets=x86_64-none-pe,x86_64-none-pep` when configuring if building it yourself).
 
 1. `sh clone-libs.sh` or `sh clone-libs.sh https` to clone the dependencies. Use the latter to
@@ -55,10 +57,10 @@ support (this is usually the case with distro-provided Binutils, use
 
 ## Installing Tosaithe
 
-Copy `tosaithe.efi` to your EFI system partition. You can copy it over `\EFI\BOOT\bootx64.efi` in
-order to boot with it (maybe), but I highly recommend you don't do that until you're sure that it
-works; copy it somewhere else and run it via Grub or the UEFI shell for example. Documentation for
-these is found elsewhere.
+Copy `tosaithe.efi` (generated in the `src` directory) to your EFI system partition. You can copy
+it over `\EFI\BOOT\bootx64.efi` in order to boot with it (maybe), but I highly recommend you don't
+do that until you're sure that it works; copy it somewhere else and run it via Grub or the UEFI
+shell for example. Documentation for these is found elsewhere.
 
 You will need a `tosaithe.conf` text file (UTF-8) in the root directory of the same partition. This
 should look something like:
