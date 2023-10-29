@@ -852,7 +852,13 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
         return EFI_LOAD_ERROR;
     }
 
-    // TODO check suitable version
+    if (ts_entry_header->min_reqd_version > 1) {
+        con_write(L"Kernel requires a later version of TSBP protocol support\r\n");
+        return EFI_LOAD_ERROR;
+    }
+    if (ts_entry_header->version < 1) {
+        con_write(L"Kernel implements a too-old version of TSBP boot protocol\r\n");
+    }
 
     uint64_t kern_stack_top = ts_entry_header->stack_ptr;
 
@@ -925,7 +931,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     //   - not for the first 1MB of address, since that almost definitely should be covered by
     //     above cases we'll play it safe. This implies the entire first 1GB must be covered by <1GB
     //     pages.
-    // - We can share mappings between low- and high- half if it doesn't overlap kernel mapping
+    // - We can share tables between low- and high- half if they don't overlap kernel mapping
     // - For the page table pages, we'll allocate the pages in chunks and use the chunk from start
     //   to end before allocating another chunk.
 

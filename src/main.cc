@@ -356,7 +356,7 @@ EfiMain (
     EFI_con_out->SetAttribute(EFI_con_out, EFI_WHITE);
     con_write(L"Tosaithe");
     EFI_con_out->SetAttribute(EFI_con_out, EFI_LIGHTGRAY);
-    con_write(L" boot menu\r\n");
+    con_write(L" version 1.0 boot menu\r\n");
 
     auto display_revision = [](uint32_t revision) {
         unsigned revision_major = revision >> 16;

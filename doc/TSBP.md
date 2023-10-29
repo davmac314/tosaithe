@@ -1,6 +1,6 @@
 # TSBP - TOSAITHE BOOT PROTOCOL
 
-_Preliminary revision_
+_Version 1.0_
 
 ## Introduction
 
@@ -105,10 +105,10 @@ It contains the following fields:
 
 - `uint32_t signature` - the Tosaithe Boot Protocol signature, corresponding to the byte sequence
   of "TSBP". The correct value can be specified as `'T' + ('S' << 8) + ('B' << 16) + ('P' << 24)`.
-- `uint32_t version` - the version of the protocol that the kernel implements. This should be 0 to
+- `uint32_t version` - the version of the protocol that the kernel implements. This should be 1 to
   match the version of the protocol documented here.
 - `uint32_t min_reqd_version` - the minimum version of the protocol that the bootloader must
-  support in order to be able to load the kernel. This should be 0.
+  support in order to be able to load the kernel. This should be 1.
 - `uint32_t flags` - flags specifying kernel requirements. Currently the following are defined:
   - bits 0-1: framebuffer requirement. `00b` = not required, `01b` = required; other values
     reserved.

@@ -1,6 +1,6 @@
 # Tosaithe
 
-_Preliminary - no official release yet_
+_Version 1.0_
 
 Tosaithe is a minimalistic UEFI-firmware menu/bootloader. It can chain-load other EFI programs
 and loaders, including Linux kernels, and has basic support for a bespoke boot protocol and
