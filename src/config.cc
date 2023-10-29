@@ -17,10 +17,11 @@ static const char * const msg_unrecognized_value = "unrecognized setting value";
 static const char * const msg_unrecognized_entry_type = "unrecognized entry type";
 static const char * const msg_unrecognized_setting = "unrecognized setting";
 static const char * const msg_invalid_value = "invalid value";
+static const char * const msg_expected_eol = "expected end-of-line after value";
 
 static void skip_ws(std::string_view &sv, int &line_num)
 {
-    while (sv.length() > 0 && (sv[0] == ' ' || sv[0] == '\t' || sv[0] == '\r' || sv[0] == '\n')) {
+    while (!sv.empty() && (sv[0] == ' ' || sv[0] == '\t' || sv[0] == '\r' || sv[0] == '\n')) {
         if (sv[0] == '\n') line_num++;
         sv.remove_prefix(1);
     }
@@ -38,6 +39,24 @@ static void skip_to_next_line(std::string_view &sv, int &line_num)
         if (sv[0] == '\n') line_num++;
         sv.remove_prefix(1);
     }
+}
+
+// Read over whitespace/comments until the next line; error if encountering non-whitespace
+static void read_over_eol(std::string_view &sv, int &line_num)
+{
+    while (!sv.empty() && (sv[0] == ' ' || sv[0] == '\t' || sv[0] == '\r')) {
+        sv.remove_prefix(1);
+    }
+
+    if (sv.empty() || sv[0] == '\n')
+        return;
+
+    if (sv[0] != '#')
+        throw parse_exception {line_num, msg_expected_eol};
+
+    // skip over comment
+    skip_to_next_line(sv, line_num);
+    return;
 }
 
 static bool is_ident_lead(char c)
@@ -67,8 +86,7 @@ static std::string read_assignment_value(std::string_view &conf, int &line_num)
 
     if (is_ident_lead(conf[0])) {
         std::string_view value = read_ident(conf);
-        // TODO check for trailing junk (allow trailing comment)
-        skip_to_next_line(conf, line_num);
+        read_over_eol(conf, line_num);
 
         return std::string(value.data(), value.length());
     }
@@ -84,9 +102,8 @@ static std::string read_assignment_value(std::string_view &conf, int &line_num)
             throw parse_exception {line_num, msg_quote_end_string};
         }
 
-        // TODO check for trailing junk (allow trailing comment)
-        skip_to_next_line(conf, line_num);
-
+        conf.remove_prefix(1); // closing quote
+        read_over_eol(conf, line_num);
         return result;
     }
 
