@@ -11,6 +11,6 @@ else
     git clone git@github.com:davmac314/libbmcxx.git libbmcxx
 fi
 
-git -c advice.detachedHead=false -C bmcxxabi checkout 834aff7495f4bae9d3b839eb6659485cf5683751
-git -c advice.detachedHead=false -C bmunwind checkout 4ee7583c10b6993e2c65955cba2e3ed2d32e829e
-git -c advice.detachedHead=false -C libbmcxx checkout 65c65c257eda35a5966daa1d3efd37eb6401f8bb
+git -c advice.detachedHead=false -C bmcxxabi checkout eb504acd75249e42dacb5e9117f823d5454a08d6
+git -c advice.detachedHead=false -C bmunwind checkout 3a10d7046d1e3da920cc67b058f7625b6871ad52
+git -c advice.detachedHead=false -C libbmcxx checkout f35b540d91378c43017fba91ccb93e6277901939
