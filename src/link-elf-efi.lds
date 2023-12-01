@@ -5,7 +5,7 @@ ENTRY(EfiMain)
  * the companion sript, link-elf.ldf) into an EFI executable (PE format).
  *
  * Essentially, we just replicate each section in the same order that it was produced in the ELF.
- * That gives us "debug compatibilty" - i.e. the debug symbols in the ELF should match the
+ * That gives us "debug compatibility" - i.e. the debug symbols in the ELF should match the
  * addresses in the PE file. 
  */
 
@@ -14,6 +14,8 @@ SECTIONS {
     .text 0x1000 : {
         *(.text)
     }
+
+    . = ALIGN(0x1000);
 
     .rodata : {
         *(.rodata)
@@ -35,16 +37,14 @@ SECTIONS {
         *(.data)
     }
 
-    . = ALIGN(0x1000);
-
     .bss . : {
         *(.bss)
     }
 
-    /* Relocations at the end. We could also put them before .bss, but this theoretically gives
-     * the option of disposing of relocations after load (without leaving a hole). We must put
-     * .reloc after .text/.data/.rodata since it must come after sections it contains relocations
-     * for, apparently. */
+    /* Relocations at the end. We could also put them before .bss, but doing this instead
+     * theoretically gives the option of disposing of relocations after load (without leaving a
+     * hole). We must put .reloc after .text/.data/.rodata since it must come after sections it
+     * contains relocations for, apparently. */
 
     . = ALIGN(0x1000);
 
