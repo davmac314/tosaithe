@@ -609,8 +609,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     // Do we need to expand the chunk read? (Typically we won't, the program headers tend to follow
     // immediately after the ELF header. But, we'll allow for the other case).
 
-    uintptr_t kernel_current_limit = elf_header_alloc.get_ptr() + first_chunk;
-
     uintptr_t elf_ph_end = elf_ph_off + elf_ph_ent_size * elf_ph_ent_num;
     if (elf_ph_end > first_chunk) {
         read_amount = std::max(elf_ph_end - first_chunk, min_read_chunk);
@@ -627,7 +625,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
             return EFI_LOAD_ERROR;
         }
 
-        kernel_current_limit += read_amount;
         first_chunk += read_amount;
     }
 
@@ -858,6 +855,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     }
     if (ts_entry_header->version < 1) {
         con_write(L"Kernel implements a too-old version of TSBP boot protocol\r\n");
+        return EFI_LOAD_ERROR;
     }
 
     uint64_t kern_stack_top = ts_entry_header->stack_ptr;
