@@ -18,7 +18,7 @@ It is also:
 
 * An example UEFI bootloader / boot menu
 * ... written in C++, exceptions and all
-* ... that can be built using standard Linux toolchain (GCC and GNU binutils)
+* ... that can be built using standard SysV ELF toolchain (eg GCC and GNU binutils on Linux)
 * ... that doesn't require EDK II or GNU-EFI
 
 It also serves as an example client of the bmcxxabi, bmunwind, and libbmcxx libraries which
@@ -44,26 +44,27 @@ See the specification document for details.
 
 ## Building Tosaithe
 
-Building requires GCC (or Clang, or another compatible compiler) targeting SysV-ABI ELF (eg Linux)
+Building requires GCC or Clang, or another compatible compiler, targeting SysV-ABI ELF (eg Linux)
 and either:
 
-* GNU binutils "ld" with support for the PE+ format (this is usually the case with distro-provided
-  Binutils, use `--enable-targets=x86_64-none-pe,x86_64-none-pep` when configuring if building it
-  yourself); or
-* GNU binutils "ld" (potentially _without_ support for PE+), or another mostly-compatible linker
-  such as LLVM's "lld" (`ld.lld`), and the "elf2efi64" utility. This may also require GCC rather
-  than Clang due to limitations in ELF2EFI.
+* GNU binutils "ld" with support for the PE+ format as well as ELF (this is usually the case with
+  distro-provided Binutils, use `--enable-targets=x86_64-none-pe,x86_64-none-pep` when configuring
+  if building it yourself); or
+* Both a linker such as GNU binutils "ld", or any other compatible linker such as LLVM's "lld"
+  (`ld.lld`) or Gold (`ld.gold`), and the "elf2efi64" utility. The linker must support GNU ld
+  linker scripts and various GNU ld command-line options but does not need PE+ support.
 
 Builds using the first option have been tested with GCC 11.4.0 and Binutils 2.39. I recommend not
 trying to use older Binutils as there have been bugs with the PE+ output format support.
+
+To build:
 
 1. `sh clone-libs.sh` or `sh clone-libs.sh https` to clone the dependencies. Use the latter to
     clone via https, which avoids needing to have your ssh public key enrolled with Github.
 2. `sh rebuild-libs.sh` to build the dependencies (in-tree)
 3. `make` to build Tosaithe (using binutils with PE+ support) or `make USE_ELF2EFI=yes` to build
    using ELF2EFI (`elf2efi64`). In the latter case `LD=...` can be specified to name an
-   alternative linker, if desired: `ld.lld` should work, if available; `ld.gold` currently fails
-   with an error.
+   alternative linker, if desired: `ld.lld` or `ld.gold` should work, if available.
 
 ## Installing Tosaithe
 
