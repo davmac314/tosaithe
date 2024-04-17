@@ -10,7 +10,7 @@ TOPDIR ::= $(PWD)
 #   On the other hand, -fpie avoids the issue because loads of addresses will be done PC-relative.
 # For x86-64 this gives smaller code (and fewer relocations).
 
-EFICFLAGS ::= -ffreestanding -fbuiltin -fshort-wchar -march=x86-64 -mno-sse -mno-mmx -mno-red-zone -fno-stack-protector -fno-stack-check -fpie
+EFICFLAGS ::= -ffreestanding -fbuiltin -fshort-wchar -march=x86-64 -mno-red-zone -fno-stack-protector -fno-stack-check -fpie
 #gcc docs say ms-abi may require this, but I've not found that to be the case: -maccumulate-outgoing-args
 CFLAGS ::= -g -Os -Wall
 CXXFLAGS ::= $(CFLAGS) -fno-rtti
