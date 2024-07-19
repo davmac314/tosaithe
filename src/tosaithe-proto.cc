@@ -1588,7 +1588,14 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
             :
             : "rm"(page_tables)
-            : "eax", "ecx", "edx"
+            : "eax", "ecx", "edx", "memory"
+
+            // Note the "memory" clobber actually also works as a store fence, ensuring that the page
+            // tables have actually been written out to memory and the stores to them will not be
+            // re-ordered (by the compiler) after this block. This is largely a theoretical concern.
+
+            // Although not used by this block, the GDT and the boot protocol information exchange
+            // structures are fenced at the same time, meaning we don't need to fence again.
     );
 
     // Load GDT, jump into kernel and switch stack:
@@ -1633,9 +1640,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                     "jmpq %A2"
 
                 :
-                : "m"(gdt_desc), "rm"(kern_stack_top), "r"(kern_entry), "D"(&loader_data),
+                : "m"(gdt_desc), "rm"(kern_stack_top), "r"(kern_entry),
+                  "D"(&loader_data), // ensure loader_data pointer is in RDI register
                   [csseg] "i"(TOSAITHE_CS_SEG)
-                : "rax"
+                : "rax" // ensure RAX is not used as an input operand
         );
 
     __builtin_unreachable();
