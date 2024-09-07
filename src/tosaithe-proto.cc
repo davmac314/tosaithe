@@ -184,12 +184,12 @@ public:
 
 
 // Global Descriptor Table for kernel entry
-DT_entry GDT_table[] = {
+descr_tbl_entry gdt_array[] = {
         {0}, // NULL
 
         // ---- 1 ----
 
-        cons_DT_code64_descriptor(),
+        cons_dt_code64_descriptor(),
 };
 
 static const CHAR16 * const OPEN_KERNEL_ERR_FIRMWARE = L"unexpected firmware error";
@@ -1601,12 +1601,12 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     // Load GDT, jump into kernel and switch stack:
 
     // Argument to LGDT instruction will be this format:
-    struct LoadGDT64_struct {
+    struct lgdt64_ptr_struct {
         uint16_t size;
-        DT_entry *base; /* linear(!) base address */
+        descr_tbl_entry *base; /* linear(!) base address */
     } __attribute__((packed));
 
-    LoadGDT64_struct gdt_desc { uint16_t(sizeof(GDT_table) - 1), GDT_table };
+    lgdt64_ptr_struct gdt_desc { uint16_t(sizeof(gdt_array) - 1), gdt_array };
 
         asm volatile (
                     "lgdt %0\n"
