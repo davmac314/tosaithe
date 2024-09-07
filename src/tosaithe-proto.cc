@@ -1618,7 +1618,7 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
                     "pushq $0\n"       // SS
                     "pushq %1\n"       // RSP
-                    "pushfq\n"
+                    "pushq $0\n"       // EFlags
                     "pushq %[csseg]\n" // CS
 
                     // rather than push the target directly, load it relative to RIP. This prevents issues
@@ -1636,7 +1636,6 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
                     "movl $0, %%eax\n"
                     "movl %%eax, %%ds\n"
                     "pushq $0x0\n"  // invalid return address
-                    "cld\n"         // ensure DF is clear
                     "jmpq %A2"
 
                 :
