@@ -1,6 +1,6 @@
 # TSBP - TOSAITHE BOOT PROTOCOL
 
-_Version 1.0_
+_Version 1.0.1pre_
 
 ## Introduction
 
@@ -58,6 +58,8 @@ followed by the field name. A set of standard types are used as defined in C/C++
 Structure fields are aligned to the size of their type, unless otherwise stated. Pointer types are
 8 bytes in size and aligned to an 8-byte boundary. Structures as a whole are aligned according to
 alignment of their largest field.
+
+Numbers preceded by `0x` are in hexadecimal; numbers are otherwise in decimal.
 
 ### TSBP Header for C and C++
 
@@ -137,18 +139,23 @@ Note: this corresponds to the SysV ABI calling convention.
 Additionally:
 
  * The processor is in 64-bit long mode (IA-32e mode).
- * The CS descriptor selects a 64-bit code segment; specifically, the first segment (after the
-   null segment) from the GDT. DS/SS will be set to the null segment selector. \
-   Note: in long mode the null selector may be used for DS/SS just as any other valid selector. \
+ * The CS descriptor selects a 64-bit code segment with CPL=0; specifically, the first non-null
+   segment from the GDT (selector value 0x8). DS/SS will be set to the null segment selector. \
+   Note: in long mode, the null selector may be used for DS/SS just as any other valid selector. \
    Note: it is recommended that the kernel establish its own GDT as soon as reasonably possible.
  * The stack pointer is set as per required by the kernel (as specified in the entry header). A
    single value (an invalid return address) will be pushed onto the stack. \
    Note: the kernel should specify a stack pointer that ensures any required alignment of the
    stack pointer for the entry function.
- * Interrupts are disabled at the processor level (i.e. the interrupt enable bit in the EFLAGS
-   register is clear).
- * The direction flag (DF) is clear.
- * Other processor state is unspecified.
+ * The `CR0.WP` flag is clear. `CR0.{PE,PG}` will necessarily be set. `CR0.{MP,EM,TS,ET,NE,AM}`
+   may take any values. `CR0.{NW,CD}` will be clear. `CR4.LA57` will be clear.
+   Other flags in control registers and MSRs are unspecified, except that features that may
+   raise exceptions or otherwise restrict execution should be disabled, as should any features
+   which alter execution or behaviour in a backwards-incompatible way.
+ * All flags in EFLAGS are clear. This includes IF, the interrupt enable flag; thus interrupts
+   are disabled at the processor level.
+ * Other processor state is unspecified, but is intended to be backwards-compatible where possible
+   with earlier hardware, and to not require specific knowledge or action on the part of the OS.
  * The entry point receives a single argument, a pointer to the `tosaithe_loader_data` structure
    (see **Loader data structure** below). Pointers within the `tosaithe_loader_data` structure
    (and any referenced structures) use physical addresses.
@@ -296,9 +303,10 @@ of memory ordered from lowest to highest address. The map indicates available me
 memory (which holds information useful to the kernel, but which may be used by the kernel once it
 has processed the information), and reserved address ranges.
 
-Note that the memory map does not include address ranges currently used by CPU-specific devices
-such as Local APIC and IOAPIC, or MMIO ranges for PCI devices or other devices that the firmware
-expects the OS to enumerate. 
+Note that the memory map does not necessarily include address ranges currently used by devices
+such as a Local APIC or IOAPIC, or MMIO ranges for PCI devices or other devices that the firmware
+expects the OS to enumerate. If ranges for such devices are present, they will be represented by
+an entry with type `RESERVED`. 
 
 The `tsbp_mmap_entry` type comprises the following fields:
 
