@@ -164,7 +164,8 @@ Additionally:
  * Page tables have been constructed to implement the address mappings discussed in the next
    section.
 
-The Page Attribute Table (PAT) is set up (via the `IA32_PAT` MSR) with the following entries:
+If the CPU supports the Page Attribute Table (PAT, the `IA32_PAT` MSR) then it is set up (via the
+`IA32_PAT` MSR) with the following entries:
 
  * 0 - 06; Write-back (WB)
  * 1 - 04; Write-throught (WT)

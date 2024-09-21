@@ -959,31 +959,25 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     PDE *page_tables = (PDE *)take_page();
 
-    // Check availability of 1GB pages:
-    // CPUID.80000001H:EDX.Page1GB [bit 26]
+    // Check availability of 1GB pages and PAT via CPUID
     bool have_1gb_pages = false;
+    bool have_pat = false;
 
-    // First check if we can use 80000001h (we'll assume we have CPUID since it's been supported
-    // even since the later 80486's):
-    uint32_t cpuid_eax;
-    uint32_t cpuid_edx;
-    asm volatile (
-            "movl $0x80000000, %%eax\n"
-            "cpuid\n"
-            : "=a"(cpuid_eax), "=d"(cpuid_edx) :  : "rbx", "rcx"
-    );
-    if (cpuid_eax >= 0x80000001) {
-        // Ok, we can use CPUID.80000001H: do so
-        asm volatile (
-                "movl $0x80000001, %%eax\n"
-                "cpuid\n"
-                : "=a"(cpuid_eax), "=d"(cpuid_edx) :  : "rbx", "rcx"
-        );
+    // For PAT:
+    {
+        uint32_t dummy;
+        cpuid_01_edx cpuid_edx;
+        cpuid(1, dummy, dummy, dummy, cpuid_edx);
+        have_pat = cpuid_edx.ft_pat;
+    }
 
-        if ((cpuid_edx & (1u << 26)) != 0) {
-            // 1GB pages are supported.
-            have_1gb_pages = true;
-        }
+    // For 1GB pages:
+    {
+        // (We can assume leaf 0x80000001 is available, as it is used to indicated support for long mode.)
+        uint32_t dummy;
+        cpuid_80000001_edx cpuid_edx;
+        cpuid(0x80000001, dummy, dummy, dummy, cpuid_edx);
+        have_1gb_pages = cpuid_edx.ft_1gbpages;
     }
 
     // Create page mapping for a region, i.e. insert a mapping from some virtual address to a physical
@@ -1190,6 +1184,10 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     // Note that this will exclude framebuffer, Local APIC / IO APIC, probably any device mapping
     // that isn't specific to the system.
 
+    // Note: ACPI spec claims that "Address ranges defined for baseboard memory-mapped I/O
+    // devices, such as APICs, are returned as reserved". It appears that APIC ranges are not
+    // included in the memory map in practice however.
+
     static_assert(tsbp_mmap_flags::CACHE_UC == (int)memory_types::CACHE_UC);
     static_assert(tsbp_mmap_flags::CACHE_WB == (int)memory_types::CACHE_WB);
     static_assert(tsbp_mmap_flags::CACHE_WC == (int)memory_types::CACHE_WC);
@@ -1199,16 +1197,19 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     EFI_MEMORY_DESCRIPTOR *mmdesc = efi_memmap_ptr.get();
     EFI_MEMORY_DESCRIPTOR *mmdesc_end = (EFI_MEMORY_DESCRIPTOR *)((uintptr_t)mmdesc + memMapSize);
 
-    uint64_t page_attr_writable = 0x2; // writable
+    constexpr uint64_t page_attr_writable = 0x2; // writable
 
     auto mem_type_for_efi_attr = [&](uint64_t attr) {
         if (attr & EFI_MEMORY_WB) return memory_types::CACHE_WB;
         if (attr & EFI_MEMORY_WT) return memory_types::CACHE_WT;
-        if (attr & EFI_MEMORY_WP) return memory_types::CACHE_WP;
-        if (attr & EFI_MEMORY_WC) return memory_types::CACHE_WC;
+        // Without PAT support, unly WB, WT and UC are supported
+        if (have_pat) {
+            if (attr & EFI_MEMORY_WP) return memory_types::CACHE_WP;
+            if (attr & EFI_MEMORY_WC) return memory_types::CACHE_WC;
+        }
         return memory_types::CACHE_UC;
     };
-    auto page_attrs_for_efi_mem = [&](uint32_t efi_type) {
+    auto page_attrs_for_efi_mem = [](uint32_t efi_type) {
         uint64_t attrs = 0;
         if (efi_type != EfiRuntimeServicesCode && efi_type != EfiUnusableMemory) {
             attrs |= page_attr_writable;
@@ -1509,14 +1510,9 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
     // We'll put that on the TODO list. For now, since we currently only handle 4-level paging,
     // we need to make sure 5-level paging isn't enabled:
 
-    uint64_t cr4flags;
+    control_reg_cr4 cr4flags = read_cr4();
 
-    asm volatile (
-            "movq %%cr4, %%rax"
-            : "=a"(cr4flags)
-    );
-
-    if (cr4flags & 0x1000) {
+    if (cr4flags.en_la57) {
         con_write(L"Error: LA57 was enabled by firmware\r\n");  // TODO
         return EFI_LOAD_ERROR;
     }
@@ -1544,59 +1540,60 @@ EFI_STATUS load_tsbp(EFI_HANDLE ImageHandle, const EFI_DEVICE_PATH_PROTOCOL *exe
 
     // Now, put our page tables in place:
 
+    // Disable interrupts. We list "memory" as a clobber to enforce a memory barrier at the
+    // compiler level - i.e. the compiler won't reorder earlier writes past this point, which
+    // ensures the page tables (and GDT, and loader data) have actually been written.
     asm volatile (
-            "cli\n"
+            "cli"
+            : : : "memory"
+            );
 
-            // make sure paging is disabled, otherwise we can't set PAE/LA57
-            //"movq %%cr0, %%rax\n"
-            //"andl $0x7FFFFFFF, %%eax\n"
-            //"movq %%rax, %%cr0\n"
+    if (have_pat) {
+        asm volatile (
+                // Set up PAT (as per memory_types:: enum)
+                //  0 - 06 - Write-back (WB)
+                //  1 - 04 - Write-throught (WT)
+                //  2 - 07 - Uncached, overridable by MTRRs (UC-)
+                //  3 - 00 - Uncached (UC)
+                //  4 - 05 - Write protected (WP)
+                //  5 - 01 - Write combining (WC)
+                "movl $0x00070406, %%eax\n"
+                "movl $0x00000105, %%edx\n"
+                "movl $0x277, %%ecx\n"  // IA32_PAT
+                "wrmsr\n"
 
-            // Set up PAT (as per memory_types:: enum)
-            //  0 - 06 - Write-back (WB)
-            //  1 - 04 - Write-throught (WT)
-            //  2 - 07 - Uncached, overridable by MTRRs (UC-)
-            //  3 - 00 - Uncached (UC)
-            //  4 - 05 - Write protected (WP)
-            //  5 - 01 - Write combining (WC)
-            "movl $0x00070406, %%eax\n"
-            "movl $0x00000105, %%edx\n"
-            "movl $0x277, %%ecx\n"  // IA32_PAT
-            "wrmsr\n"
+                // After modifying the PAT a lot of TLB/cache flushing is required according to
+                // the Intel processor manuals. We're not expecting to have changed the cache type
+                // of any memory range, but to be safe we'll follow the other recommendations:
 
-            // After modifying the PAT a lot of TLB/cache flushing is required according to the
-            // Intel processor manuals. The only part of this that we otherwise need is to reload
-            // CR3 (page directory base). We're not expecting to have changed the cache type of
-            // any memory range, but to be safe we'll follow the other recommendations:
+                // Enter cache no-fill mode: Set CD to 1 and NW to 0 in CR0:
+                "movq %%cr0, %%rax\n"
+                "orl $(1 << 30), %%eax\n"  // CD=1
+                "andl $(0xffffffff - (1 << 29)), %%eax\n"  // NW=0
+                "movq %%rax, %%cr0\n"
 
-            // Enter cache no-fill mode: Set CD to 1 and NW to 0 in CR0:
-            "movq %%cr0, %%rax\n"
-            "orl $(1 << 30), %%eax\n"  // CD=1
-            "andl $(0xffffffff - (1 << 29)), %%eax\n"  // NW=0
-            "movq %%rax, %%cr0\n"
+                // Flush cache
+                "wbinvd\n"
 
-            // Flush cache
-            "wbinvd\n"
+                // Put our own page tables in place:
+                "movq %0, %%rdx\n"
+                "movq %%rdx, %%cr3\n"
 
-            // Put our own page tables in place:
-            "movq %0, %%rdx\n"
-            "movq %%rdx, %%cr3\n"
+                // Restore normal cache operation (CD=0; NW is already 0):
+                "andl $(0xffffffff - (1 << 30)), %%eax\n"
+                "movq %%rax, %%cr0"
 
-            // Restore normal cache operation (CD=0; NW is already 0):
-            "andl $(0xffffffff - (1 << 30)), %%eax\n"
-            "movq %%rax, %%cr0\n"
+                :
+                : "rm"(page_tables)
+                : "eax", "ecx", "edx"
+            );
 
-            :
-            : "rm"(page_tables)
-            : "eax", "ecx", "edx", "memory"
-
-            // Note the "memory" clobber actually also works as a store fence, ensuring that the page
-            // tables have actually been written out to memory and the stores to them will not be
-            // re-ordered (by the compiler) after this block. This is largely a theoretical concern.
-
-            // Although not used by this block, the GDT and the boot protocol information exchange
-            // structures are fenced at the same time, meaning we don't need to fence again.
-    );
+    }
+    else {
+        // No PAT - we need only load cr3. The value is aligned, so need to explicitly clear
+        // lower bits:
+        write_cr3((uint64_t)page_tables);
+    }
 
     // Load GDT, jump into kernel and switch stack:
 
