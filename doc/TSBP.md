@@ -97,6 +97,7 @@ of the usual linking process; they are listed here.
 
 The format of the Tosaithe Entry Header is detailed in the following section.
 
+
 ## Tosaithe Entry Header
 
 The Tosaithe Entry Header (`tosaithe_entry_header` structure) must be present in the kernel, such
@@ -106,7 +107,8 @@ above).
 It contains the following fields:
 
 - `uint32_t signature` - the Tosaithe Boot Protocol signature, corresponding to the byte sequence
-  of "TSBP". The correct value can be specified as `'T' + ('S' << 8) + ('B' << 16) + ('P' << 24)`.
+  of "TSBP" (the value `0x50425354`). \
+  Note: in C, the correct value can be specified as `'T' + ('S' << 8) + ('B' << 16) + ('P' << 24)`.
 - `uint32_t version` - the version of the protocol that the kernel implements. This should be 1 to
   match the version of the protocol documented here.
 - `uint32_t min_reqd_version` - the minimum version of the protocol that the bootloader must
@@ -116,6 +118,7 @@ It contains the following fields:
     reserved.
   - other bits are reserved and should be set to 0. 
 - `uintptr_t stack_ptr` - the stack pointer that should be established on entry to the kernel.
+
 
 ## How the Kernel is Loaded
 
@@ -128,8 +131,7 @@ following restrictions apply:
    size in memory is larger than the size in file) will be zero-filled. \
    Note: this allows for a standard ".bss" section.
 
-
-## Entry To Kernel
+### Entry To Kernel
 
 The bootloader transfers control by jumping to execution at the entry point (specified via the ELF
 header). The entry function is passed a single parameter, a pointer to the TSBP loader data
@@ -201,9 +203,12 @@ the bootloader, as follows:
    (`-mcmodel=kernel`) for example, and prevents conflict with other mappings.
  * Any mapped memory is mapped using pages of an unspecified (and possibly heterogeneous) size.
 
+Usable memory is readable and writable by ring-0 (supervisor) code.
+
 The kernel is free to modify the bootloader-provided page tables, but there are no guarantees made
 as to their exact location or structure. It is recommended that the kernel establish its own page
 tables as early as possible.
+
 
 ## Loader Data Structure
 
@@ -348,7 +353,8 @@ The `tbsp_mmap_type` field 32 bits in size, and takes one of the following value
 - `tbsp_mmap_type::RAMDISK` (0x1002) - the memory contains a ramdisk image, passed to the kernel
   via the `ramdisk` pointer.
 - `tbsp_mmap_type::FRAMEBUFFER` (0x1003) - the memory contains a graphics framebuffer, passed to
-  the kernel via the `framebuffer_addr` pointer.
+  the kernel via the `framebuffer_addr` pointer. This is provided for convenience; it may not
+  match exactly the MMIO window actually provided to the underlying graphics device.
 
 The flags field may contain the following values (combined via bitwise-OR):
 
@@ -367,6 +373,7 @@ index of the PAT entry that has been initialised with the corresponding type.
 
 The `tsbp_mmap_flags::CACHE_MASK` value can be used as a bitmask to extract the cache type from a
 flags value.
+
 
 ## Kernel Mappings
 
