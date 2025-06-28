@@ -304,15 +304,15 @@ The following fields provide framebuffer information:
 ## Tosaithe Memory Map
 
 The memory map provided (via the `memmap` field of the loader data) by the loader data is a map of
-physical memory, comprising entries of type `tsbp_mmap_entry`, representing non-overlapping ranges
-of memory ordered from lowest to highest address. The map indicates available memory, reclaimable
-memory (which holds information useful to the kernel, but which may be used by the kernel once it
-has processed the information), and reserved address ranges.
+the physical address space, comprising entries of type `tsbp_mmap_entry`, representing
+non-overlapping address ranges ordered from lowest to highest address. The map indicates
+available memory, reclaimable memory (which holds information useful to the kernel, but which may
+be used by the kernel once it has processed the information), and reserved address ranges.
 
-Note that the memory map does not necessarily include address ranges currently used by devices
-such as a Local APIC or IOAPIC, or MMIO ranges for PCI devices or other devices that the firmware
-expects the OS to enumerate. If ranges for such devices are present, they will be represented by
-an entry with type `RESERVED`. 
+Note that the memory map is typically derived from a memory map provided by firmware. It does not
+necessarily include address ranges currently used by devices such as a Local APIC or IOAPIC, or
+MMIO ranges for PCI devices or other devices that the firmware expects the OS to enumerate. If
+ranges for such devices are present, they will be represented by an entry with type `RESERVED`.
 
 The `tsbp_mmap_entry` type comprises the following fields:
 
@@ -326,6 +326,8 @@ The `tbsp_mmap_type` field 32 bits in size, and takes one of the following value
 - `tbsp_mmap_type::USABLE` (0) - the memory is available for use by the OS kernel.
 - `tbsp_mmap_type::RESERVED` (1) - the address range is reserved; any memory in the range should
   not be accessed by the OS. No device should have its MMIO space mapped to the address by the OS.
+  A reserved area may cover MMIO access to baseboard devices (advertised via ACPI for example), or
+  be generally unusable for some other unspecified reason.
 - `tbsp_mmap_type::ACPI_RECLAIMABLE` (2) - the memory contains ACPI tables, and is usable by the
   OS once it no longer needs the tables.
 - `tbsp_mmap_type::ACPI_NVS` (3) - the memory is used by ACPI firmware and the OS should not use
@@ -335,7 +337,9 @@ The `tbsp_mmap_type` field 32 bits in size, and takes one of the following value
   services. \
   Note: if the OS will use UEFI runtime services with an alternative address map established via
   the `SetVirtualAddressMap()` UEFI runtime service function, it must provide a mapping for this
-  memory region as part of that call.
+  memory region as part of that call. It is recommended however to refer to the firmware-provided
+  memory map (accessible via `efi_memmap` in the loader data structure) for determining that such
+  mappings are required. 
 - `tbsp_mmap_type::BAD_MEMORY` (6) - the memory in this region is known to be faulty, and should
   not be used.
 - `tbsp_mmap_type::PERSISTENT_MEMORY` (7) - the memory in this range is persistent (the contents
@@ -364,9 +368,11 @@ The flags field may contain the following values (combined via bitwise-OR):
   - `tsbp_mmap_flags::CACHE_UC` (2) - uncacheable
   - `tsbp_mmap_flags::CACHE_WP` (4) - write-protect
   - `tsbp_mmap_flags::CACHE_WC` (5) - write-combining
-- `tsbp_mmap_flags::UEFI_RUNTIME` (0x10) - indicates that the memory region requires a mapping for
-  UEFI runtime services (a mapping for the memory region must be included in any memory map passed
-  to the `SetVirtualMap` UEFI runtime services function).
+- `tsbp_mmap_flags::UEFI_RUNTIME` (0x10) (Deprecated) - indicates that the memory region requires
+  a mapping for UEFI runtime services (a mapping for the memory region must be included in any
+  memory map passed to the `SetVirtualMap` UEFI runtime services function). \
+  Note: It is recommended to instead use the firmware provided memory map to determine
+  requirements for the map passed to `SetVirtualMap`. 
 
 Note: the `tsbp_mmap_flags::CACHE_XX` value for a particular caching type (XX) correspond to the
 index of the PAT entry that has been initialised with the corresponding type.
